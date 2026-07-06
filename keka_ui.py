@@ -94,7 +94,8 @@ class Backend:
             "sessionDaysLeft": days,
             "week": self._build_week(hist),
             "activity": activity,
-            "config": {"url": env.get("KEKA_BASE_URL", ""), "email": env.get("KEKA_EMAIL", "")},
+            "config": {"url": env.get("KEKA_BASE_URL", ""), "email": env.get("KEKA_EMAIL", ""),
+                       "configured": bool(env.get("KEKA_EMAIL") and env.get("KEKA_PASSWORD"))},
         }
 
     def clock_in(self):
@@ -129,9 +130,14 @@ class Backend:
 
     def save_creds(self, obj):
         obj = obj or {}
-        kc.update_env({"KEKA_BASE_URL": (obj.get("url") or "").strip(),
-                       "KEKA_EMAIL": (obj.get("email") or "").strip(),
-                       "KEKA_PASSWORD": obj.get("password") or ""})
+        # Only update fields the user actually filled in, so editing (e.g.) just
+        # the URL never wipes a saved password.
+        updates = {}
+        if (obj.get("url") or "").strip():   updates["KEKA_BASE_URL"] = obj["url"].strip()
+        if (obj.get("email") or "").strip(): updates["KEKA_EMAIL"] = obj["email"].strip()
+        if obj.get("password"):              updates["KEKA_PASSWORD"] = obj["password"]
+        if updates:
+            kc.update_env(updates)
         kc.log_history("info", "Credentials saved")
         return {"ok": True}
 
@@ -251,7 +257,7 @@ def _push_native(window, obj):
 
 
 class Api:
-    """Exactly the 7 methods the page calls as window.pywebview.api.*"""
+    """The methods the page calls as window.pywebview.api.*"""
     def __init__(self, backend):
         self._b = backend
     def get_state(self):        return self._b.get_state()
@@ -262,13 +268,26 @@ class Api:
     def save_creds(self, obj):  return self._b.save_creds(obj)
     def apply_schedule(self, obj): return self._b.apply_schedule(obj)
 
+    # frameless-window controls (the design draws its own traffic lights)
+    def win_close(self):
+        import webview
+        try: webview.windows[0].destroy()
+        except Exception: pass
+    def win_minimize(self):
+        import webview
+        try: webview.windows[0].minimize()
+        except Exception:
+            try: webview.windows[0].hide()
+            except Exception: pass
+
 
 def run_native():
     import webview  # raises if pywebview missing
     backend = Backend()
     window = webview.create_window(
         "Auto-Keka", url=UI_HTML, js_api=Api(backend),
-        width=860, height=760, min_size=(560, 640), background_color="#0e5f57",
+        width=860, height=760, min_size=(560, 640), background_color="#eef4f2",
+        frameless=True, easy_drag=False,   # design supplies its own title bar
     )
     backend.emit = lambda obj: _push_native(window, obj)
     webview.start()          # blocks; must be on the main thread

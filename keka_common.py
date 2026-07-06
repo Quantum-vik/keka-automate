@@ -580,11 +580,25 @@ def run_punch(action, log_file):
             return
 
         if not click_punch(page, log, action):
-            shot = tmp_path(f"keka_punch{action}_debug_{datetime.now():%Y%m%d_%H%M%S}.png")
-            page.screenshot(path=shot)
-            log.error("Punch-%s button NOT found. Screenshot: %s", action, shot)
-            browser.close()
-            sys.exit(1)
+            # SPA may still be settling (or another tab just changed state).
+            # Reload, re-check idempotency, and try once more before failing.
+            log.warning("Punch-%s button not found — reloading and retrying", action)
+            page.goto(ATTENDANCE_URL, wait_until="domcontentloaded", timeout=30_000)
+            page.wait_for_timeout(6000)
+            if action == "in" and page.locator('text="Web Clock-out"').count() > 0:
+                log.info("Already clocked IN after reload — nothing to do")
+                log_history("in", "Already clocked in — no double-punch")
+                browser.close(); cleanup_pngs(log); return
+            if action == "out" and page.locator('text="Web Clock-In"').count() > 0:
+                log.info("Already clocked OUT after reload — nothing to do")
+                log_history("out", "Already clocked out — no double-punch")
+                browser.close(); cleanup_pngs(log); return
+            if not click_punch(page, log, action):
+                shot = tmp_path(f"keka_punch{action}_debug_{datetime.now():%Y%m%d_%H%M%S}.png")
+                page.screenshot(path=shot)
+                log.error("Punch-%s button NOT found. Screenshot: %s", action, shot)
+                browser.close()
+                sys.exit(1)
 
         page.wait_for_timeout(3000)
 

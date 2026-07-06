@@ -9,3 +9,7 @@ __pycache__/
 # design handoff artifacts
 Better UI designs.zip
 *.zip
+Auto-Keka.app/
+Auto-Keka.command
+*.icns
+packaging/auto-keka.ico

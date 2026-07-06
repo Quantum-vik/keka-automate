@@ -34,6 +34,42 @@ for a 10-second security code (more on that below 👇).
 
 ---
 
+## 🚀 How to use it (start here)
+
+**1 · Install** — one command sets up everything:
+```bash
+./setup.sh                                                   # 🍎 macOS · 🐧 Linux
+powershell -ExecutionPolicy Bypass -File setup.ps1           # 🪟 Windows
+```
+It installs the dependencies, then asks for your Keka URL / email / password and
+opens a browser once for your OTP.
+
+**2 · (Optional) Make it a clickable app** with a name + icon:
+```bash
+bash packaging/build_macos_app.sh                                          # 🍎 → Auto-Keka.app
+bash packaging/build_linux_app.sh                                          # 🐧 → app-menu entry
+powershell -ExecutionPolicy Bypass -File packaging\build_windows_app.ps1   # 🪟 → Desktop/Start-Menu shortcut
+```
+Now open **Auto-Keka** from your Dock / apps menu / Start menu. *(Or skip this and
+just run `.venv/bin/python keka_ui.py`.)*
+
+**3 · Set it up once** — in the app, click the **⚙️ gear** (top-right):
+- **Account** → your Keka URL, email, password → **Save credentials**
+- **Schedule** → clock-in and clock-out times → **Save & apply schedule**
+
+**4 · First login** → click **🔑 Refresh session** → an **OTP box** pops up → type
+the code from your email. Done.
+
+**That's it — it now runs itself.** It clocks you **in and out at your set times,
+Mon–Fri**, in the background. Any time, you can also:
+- ☀️ **Clock In** / 🌙 **Clock Out** on demand (it never double-punches)
+- Watch **This Week** + **Activity** to see what it's done
+- **Every ~14 days** the OTP box pops again — enter a fresh code, set for another 2 weeks
+
+> No GUI? Everything works from the terminal too — see **Handy commands** below.
+
+---
+
 ## 🧠 Why this is trickier than it sounds
 
 Keka doesn't just let a robot walk in. It throws up **three walls**:

@@ -39,6 +39,15 @@ jobs:
         shell: pwsh
         run: ./setup.ps1 -NoLogin -NoSchedule
 
+      - name: Compile all scripts — Unix
+        if: runner.os != 'Windows'
+        run: ./.venv/bin/python -c "import py_compile,glob;[py_compile.compile(f,doraise=True) for f in glob.glob('*.py')]"
+
+      - name: Compile all scripts — Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\.venv\Scripts\python.exe -c "import py_compile,glob;[py_compile.compile(f,doraise=True) for f in glob.glob('*.py')]"
+
       - name: Smoke test — Unix
         if: runner.os != 'Windows'
         run: ./.venv/bin/python .github/scripts/smoke.py

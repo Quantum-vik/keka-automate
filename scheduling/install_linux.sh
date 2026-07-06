@@ -33,16 +33,24 @@ if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
     echo "         open a browser here. Run keka_setup.py manually when it expires."
 fi
 
-CRON_IN="0 9 * * 1-5 $PY $KEKA/keka_punch_in.py >> $LOG 2>&1"
-CRON_OUT="0 18 * * 1-5 $PY $KEKA/keka_punch_out.py >> $LOG 2>&1"
+# Clock times from .env (KEKA_IN_TIME / KEKA_OUT_TIME, "HH:MM"), default 09:00/18:00.
+IN_TIME=$(grep -E '^KEKA_IN_TIME=' "$KEKA/.env" 2>/dev/null | cut -d= -f2 | tr -d ' \r"')
+OUT_TIME=$(grep -E '^KEKA_OUT_TIME=' "$KEKA/.env" 2>/dev/null | cut -d= -f2 | tr -d ' \r"')
+IN_H=$(printf '%s' "${IN_TIME:-09:00}"  | cut -d: -f1 | sed 's/^0//'); IN_H=${IN_H:-0}
+IN_M=$(printf '%s' "${IN_TIME:-09:00}"  | cut -d: -f2 | sed 's/^0*//'); IN_M=${IN_M:-0}
+OUT_H=$(printf '%s' "${OUT_TIME:-18:00}" | cut -d: -f1 | sed 's/^0//'); OUT_H=${OUT_H:-0}
+OUT_M=$(printf '%s' "${OUT_TIME:-18:00}" | cut -d: -f2 | sed 's/^0*//'); OUT_M=${OUT_M:-0}
+
+CRON_IN="$IN_M $IN_H * * 1-5 $PY $KEKA/keka_punch_in.py >> $LOG 2>&1"
+CRON_OUT="$OUT_M $OUT_H * * 1-5 $PY $KEKA/keka_punch_out.py >> $LOG 2>&1"
 CRON_CHK="0 10 * * * ${GUI_ENV}$PY $KEKA/keka_check.py >> $LOG 2>&1"
 
 ( crontab -l 2>/dev/null | grep -v "keka_punch\|keka_check"; \
   echo "$CRON_IN"; echo "$CRON_OUT"; echo "$CRON_CHK" ) | crontab -
 
 echo "Installed Keka cron jobs:"
-echo "  Punch in   9:00 AM Mon-Fri"
-echo "  Punch out  6:00 PM Mon-Fri"
-echo "  Reauth     10:00 AM daily"
+echo "  Punch in   ${IN_H}:$(printf '%02d' "$IN_M") Mon-Fri"
+echo "  Punch out  ${OUT_H}:$(printf '%02d' "$OUT_M") Mon-Fri"
+echo "  Reauth     10:00 daily"
 echo "Verify with:  crontab -l"
 echo "Logs in:      $KEKA/logs/"

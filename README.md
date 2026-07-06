@@ -77,6 +77,27 @@ you're already clocked in/out, it just shrugs and exits (no double-punching). �
 
 ---
 
+## 🖥️ Desktop app (optional)
+
+Prefer buttons over a terminal? There's a little cross-platform control panel:
+
+```bash
+.venv/bin/python keka_ui.py        # Windows: .venv\Scripts\python keka_ui.py
+```
+
+From the window you can:
+- 🔐 Set your **Keka URL / email / password** and save them
+- ⏰ Set your **clock-in / clock-out times** and apply the schedule
+- ☀️🌙 **Clock in / out** on demand
+- 🔑 **Login / refresh session** — and when Keka needs the 2FA code, an **OTP box
+  pops up right in the app**: read the code from your email, type it in, done.
+  No browser window, all headless.
+
+Built with Tkinter (Python's built-in GUI) so it runs on macOS, Linux, and
+Windows. On Linux it needs `python3-tk` (the installer adds it).
+
+---
+
 ## 🚀 Setup — one command
 
 Clone the repo, then run the installer for your OS. It does **everything**:
@@ -200,6 +221,7 @@ schtasks /Delete /F /TN Keka\PunchIn                # remove (also PunchOut, Rea
 
 ```
 setup.sh / setup.ps1   🚀  one-command installer (macOS/Linux · Windows)
+keka_ui.py             🖥️  desktop control panel (Tkinter) with in-app OTP box
 keka_setup.py          🪪  one-time login + OTP → saves session
 keka_punch_in.py       ☀️  clock in
 keka_punch_out.py      🌙  clock out

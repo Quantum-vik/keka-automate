@@ -84,15 +84,45 @@ def _load_env():
     return values
 
 
+def _apply_env(values):
+    """Set the module-level config from a parsed .env dict + real env vars."""
+    global BASE_URL, TENANT_HOST, ATTENDANCE_URL, EMAIL, PASSWORD, IN_TIME, OUT_TIME
+    BASE_URL = os.environ.get("KEKA_BASE_URL") or values.get("KEKA_BASE_URL", "https://<company-name>.keka.com")
+    TENANT_HOST = BASE_URL.split("://")[-1].split("/")[0]
+    ATTENDANCE_URL = f"{BASE_URL}/#/me/attendance/logs"
+    EMAIL = os.environ.get("KEKA_EMAIL") or values.get("KEKA_EMAIL", "")
+    PASSWORD = os.environ.get("KEKA_PASSWORD") or values.get("KEKA_PASSWORD", "")
+    IN_TIME = values.get("KEKA_IN_TIME", "09:00")
+    OUT_TIME = values.get("KEKA_OUT_TIME", "18:00")
+
+
 _env = _load_env()
+_apply_env(_env)
 
-# Your Keka tenant URL. Set KEKA_BASE_URL in .env (e.g. https://acme.keka.com).
-BASE_URL       = os.environ.get("KEKA_BASE_URL") or _env.get("KEKA_BASE_URL", "https://<company-name>.keka.com")
-TENANT_HOST    = BASE_URL.split("://")[-1].split("/")[0]   # e.g. acme.keka.com
-ATTENDANCE_URL = f"{BASE_URL}/#/me/attendance/logs"
 
-EMAIL    = os.environ.get("KEKA_EMAIL")    or _env.get("KEKA_EMAIL", "")
-PASSWORD = os.environ.get("KEKA_PASSWORD") or _env.get("KEKA_PASSWORD", "")
+def reload_config():
+    """Re-read .env into the module globals (call after the GUI edits it)."""
+    global _env
+    _env = _load_env()
+    _apply_env(_env)
+
+
+def update_env(updates):
+    """Merge {KEY: value} into .env (create if missing), keep other keys, 0600."""
+    current = _load_env()
+    for k, v in updates.items():
+        if v is not None:
+            current[str(k)] = str(v)
+    env_path = os.path.join(SCRIPT_DIR, ".env")
+    lines = ["# Keka credentials + settings. Private — keep chmod 600."]
+    lines += [f"{k}={v}" for k, v in current.items()]
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    try:
+        os.chmod(env_path, 0o600)
+    except OSError:
+        pass
+    reload_config()
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -215,6 +245,114 @@ def save_session(ctx):
         os.chmod(SESSION_FILE, 0o600)   # no-op-ish on Windows, harmless
     except OSError:
         pass
+
+
+# ── UI-driven headless login (email OTP entered in the app, no browser popup) ──
+def request_email_otp(page, log):
+    """On the 2FA 'SendCode' page, ask Keka to email the OTP. No-op if we're
+    already on the code-entry page."""
+    if "SendCode" not in page.url:
+        return True
+    for sel in ('button:has-text("Send code to email")',
+                'a:has-text("Send code to email")',
+                'button:has-text("email")', 'a:has-text("email")'):
+        loc = page.locator(sel)
+        if loc.count() and loc.first.is_visible():
+            loc.first.click()
+            page.wait_for_timeout(2500)
+            log.info("Requested OTP to email")
+            return True
+    log.warning("'Send code to email' button not found")
+    return False
+
+
+def submit_otp(page, log, otp):
+    """Fill the emailed OTP and submit. Returns True if login completes."""
+    otp = "".join(str(otp).split())
+    filled = False
+    for sel in ('input[name="Code"]', 'input#Code', 'input[name*="code" i]',
+                'input[id*="code" i]', 'input[placeholder*="code" i]',
+                'input[type="tel"]', 'input[type="number"]',
+                'input[type="text"]:not([type="hidden"])'):
+        loc = page.locator(sel)
+        if loc.count() and loc.first.is_visible():
+            loc.first.fill(otp)
+            filled = True
+            log.info("OTP entered")
+            break
+    if not filled:
+        log.error("OTP input field not found")
+        return False
+    clicked = False
+    for sel in ('button:has-text("Login")', 'button:has-text("Verify")',
+                'button:has-text("Submit")', 'button:has-text("Confirm")',
+                'button:has-text("Sign in")', 'button:has-text("Continue")',
+                'button[type="submit"]'):
+        loc = page.locator(sel)
+        if loc.count() and loc.first.is_visible():
+            loc.first.click()
+            clicked = True
+            break
+    if not clicked:
+        page.keyboard.press("Enter")   # single-field form — Enter submits it
+    page.wait_for_timeout(3500)
+    return is_logged_in(page)
+
+
+def interactive_login(otp_getter, log, headless=True):
+    """
+    Full login used by the GUI. Reuses the saved session if still valid;
+    otherwise does password + OCR captcha, requests the email OTP, and calls
+    otp_getter() (which blocks until the user types the code in the UI).
+
+    otp_getter(retry=False) -> str|None   (None cancels)
+    Returns True on success, False otherwise. Runs headless (no browser popup).
+    """
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=headless)
+        state = SESSION_FILE if os.path.exists(SESSION_FILE) else None
+        ctx = browser.new_context(storage_state=state)
+        page = ctx.new_page()
+        try:
+            # 1) reuse existing session if it still works
+            page.goto(ATTENDANCE_URL, wait_until="domcontentloaded", timeout=30_000)
+            page.wait_for_timeout(4000)
+            if is_logged_in(page):
+                save_session(ctx)
+                log.info("Existing session still valid")
+                return True
+
+            # 2) password + captcha
+            url = submit_credentials(page, log)
+            if not url:
+                return False
+
+            # 3) OTP, if the tenant asks for it (it does)
+            if "SendCode" in url or "VerifyCode" in url:
+                request_email_otp(page, log)
+                ok, tries = False, 0
+                while not ok and tries < 3:
+                    otp = otp_getter(retry=(tries > 0))
+                    if not otp:
+                        log.info("Login cancelled by user")
+                        return False
+                    ok = submit_otp(page, log, otp)
+                    tries += 1
+                if not ok:
+                    log.error("OTP not accepted after %d tries", tries)
+                    return False
+
+            # 4) warm up attendance origin + save
+            try:
+                page.goto(ATTENDANCE_URL, wait_until="domcontentloaded", timeout=30_000)
+                page.wait_for_timeout(4000)
+            except Exception:
+                pass
+            save_session(ctx)
+            log.info("Login complete — session saved")
+            return True
+        finally:
+            browser.close()
 
 
 # ── Punch action ──────────────────────────────────────────────────────────────

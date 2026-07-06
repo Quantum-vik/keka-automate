@@ -1,0 +1,7 @@
+# Secrets and state — never commit these
+.env
+session.json
+logs/
+.venv/
+__pycache__/
+*.pyc

@@ -42,6 +42,13 @@ die() { printf "  \033[1;31m✗ %s\033[0m\n" "$*" >&2; exit 1; }
 
 OS="$(uname -s)"   # Linux or Darwin
 
+# Keep apt fully non-interactive. `playwright install --with-deps` shells out to
+# apt, which can otherwise stall on a tzdata timezone prompt on a fresh/minimal
+# Linux box (a real hang, seen in container testing).
+if [ "$OS" = "Linux" ]; then
+    export DEBIAN_FRONTEND=noninteractive
+fi
+
 # ── 1. Python ─────────────────────────────────────────────────────────────────
 b "Checking Python"
 PYBIN="$(command -v python3 || true)"

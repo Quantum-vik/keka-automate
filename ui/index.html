@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Auto-Keka</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "Helvetica Neue", sans-serif;
+    -webkit-user-select: none; user-select: none;
+    background: linear-gradient(150deg,#0e5f57 0%,#0a7d70 38%,#12a892 72%,#3fc9b0 100%);
+    overflow: hidden;
+  }
+  /* ── design tokens (see README → Design Tokens) ───────────────────────── */
+  :root {
+    --teal-600:#0a8d7b; --teal-500:#0fa98e; --teal-grad:linear-gradient(90deg,#14c2a5,#0a8d7b);
+    --present:#17b67a; --out:#e8933c;
+    --ink:#0f3a34; --ink-2:rgba(18,51,46,0.55); --ink-3:rgba(18,51,46,0.42);
+    --glass:rgba(255,255,255,0.55); --glass-strong:rgba(255,255,255,0.62);
+    --glass-border:rgba(255,255,255,0.72);
+    --mono:'SF Mono',ui-monospace,Menlo,monospace;
+  }
+  a { color: var(--teal-600); }
+  a:hover { color: var(--teal-500); }
+
+  #wall { position: relative; height: 100%; width: 100%; display:flex; align-items:center; justify-content:center; padding:40px 24px; overflow:hidden; }
+  .blob { position:absolute; border-radius:50%; pointer-events:none; }
+  .blob.a { top:-140px; left:-120px; width:520px; height:520px; filter:blur(20px);
+    background:radial-gradient(circle at 30% 30%, rgba(120,255,220,.55), rgba(120,255,220,0) 70%); animation:driftA 22s ease-in-out infinite; }
+  .blob.b { bottom:-160px; right:-100px; width:560px; height:560px; filter:blur(20px);
+    background:radial-gradient(circle at 60% 40%, rgba(20,120,180,.5), rgba(20,120,180,0) 70%); animation:driftB 26s ease-in-out infinite; }
+  .blob.c { top:40%; left:55%; width:420px; height:420px; filter:blur(30px);
+    background:radial-gradient(circle at 50% 50%, rgba(255,225,150,.28), rgba(255,225,150,0) 70%); }
+  @keyframes driftA { 0%,100%{transform:translate(0,0) scale(1);} 50%{transform:translate(60px,-40px) scale(1.15);} }
+  @keyframes driftB { 0%,100%{transform:translate(0,0) scale(1);} 50%{transform:translate(-50px,50px) scale(1.1);} }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(23,182,122,.55);} 70%{box-shadow:0 0 0 8px rgba(23,182,122,0);} 100%{box-shadow:0 0 0 0 rgba(23,182,122,0);} }
+
+  /* ── window chrome ───────────────────────────────────────────────────── */
+  #win { position:relative; width:800px; max-width:100%; border-radius:26px; overflow:hidden;
+    background:var(--glass-strong); backdrop-filter:blur(50px) saturate(180%); -webkit-backdrop-filter:blur(50px) saturate(180%);
+    border:.5px solid rgba(255,255,255,.7); box-shadow:0 0 0 1px rgba(6,50,44,.14), 0 30px 80px rgba(4,40,36,.45); }
+  #titlebar { display:flex; align-items:center; gap:12px; height:52px; padding:0 18px;
+    border-bottom:.5px solid rgba(6,60,50,.10); background:rgba(255,255,255,.28); }
+  .lights { display:flex; gap:8px; align-items:center; }
+  .lights i { width:12px; height:12px; border-radius:50%; border:.5px solid rgba(0,0,0,.08); display:block; }
+  .brand { flex:1; display:flex; align-items:center; justify-content:center; gap:9px; }
+  .logo { width:26px; height:26px; border-radius:8px; background:linear-gradient(145deg,#14c2a5,#0a8d7b);
+    display:flex; align-items:center; justify-content:center; box-shadow:0 2px 6px rgba(8,120,105,.4), inset 0 1px 0 rgba(255,255,255,.4); }
+  .brand span { font-size:14px; font-weight:600; letter-spacing:-.01em; color:var(--ink); }
+  .autopill { display:flex; align-items:center; gap:7px; padding:5px 11px; border-radius:999px;
+    background:rgba(23,182,122,.12); border:.5px solid rgba(23,182,122,.25); }
+  .autopill i { width:7px; height:7px; border-radius:50%; background:var(--present); }
+  .autopill span { font-size:11.5px; font-weight:600; color:#0b7d54; }
+
+  #content { padding:22px; display:flex; flex-direction:column; gap:16px; max-height:82vh; overflow:auto; }
+  .card { border-radius:20px; padding:20px; background:var(--glass); border:.5px solid var(--glass-border);
+    box-shadow:0 8px 28px rgba(6,60,50,.10), inset 0 1px 0 rgba(255,255,255,.6); }
+  .kicker { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-2); }
+
+  /* hero */
+  .hero { border-radius:22px; padding:24px 26px; background:var(--glass-strong);
+    backdrop-filter:blur(30px) saturate(180%); -webkit-backdrop-filter:blur(30px) saturate(180%);
+    border:.5px solid rgba(255,255,255,.75); box-shadow:0 10px 36px rgba(6,60,50,.12), inset 0 1px 0 rgba(255,255,255,.7); }
+  .hero-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:18px; }
+  .hero-status { display:flex; align-items:center; gap:10px; }
+  .hero-status .dot { width:11px; height:11px; border-radius:50%; background:var(--present); animation:pulse 2.4s ease-in-out infinite; }
+  .hero-status .txt { font-size:18px; font-weight:650; letter-spacing:-.02em; color:var(--ink); }
+  .hero-date { font-size:13px; font-weight:500; color:rgba(18,51,46,.5); }
+  .hero .lbl { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-3); margin-bottom:4px; }
+  .hero .timer { font-family:var(--mono); font-size:52px; font-weight:600; letter-spacing:-.02em; color:#0d3833; line-height:1; margin-bottom:6px; }
+  .hero .sub { font-size:13.5px; font-weight:500; color:var(--ink-2); margin-bottom:20px; }
+  .bar { height:8px; border-radius:999px; background:rgba(6,60,50,.09); overflow:hidden; }
+  .bar > i { display:block; height:100%; border-radius:999px; background:var(--teal-grad); transition:width .4s ease; }
+  .bar-legend { display:flex; justify-content:space-between; margin-top:7px; font-size:11.5px; font-weight:500; color:rgba(18,51,46,.45); }
+
+  /* actions */
+  .actions { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+  .btn { cursor:pointer; display:flex; align-items:center; justify-content:center; gap:9px; height:52px; border-radius:15px;
+    background:rgba(255,255,255,.58); border:.5px solid var(--glass-border);
+    box-shadow:0 6px 20px rgba(6,60,50,.10), inset 0 1px 0 rgba(255,255,255,.6); transition:background .15s ease; }
+  .btn:hover { background:rgba(255,255,255,.82); }
+  .btn:active { transform:translateY(1px); }
+  .btn i { width:9px; height:9px; border-radius:50%; }
+  .btn span { font-size:14px; font-weight:600; color:var(--ink); }
+
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .card .head { display:flex; align-items:center; gap:8px; margin-bottom:16px; }
+  .card .head i { width:8px; height:8px; border-radius:50%; }
+  .big { font-size:22px; font-weight:650; letter-spacing:-.02em; color:var(--ink); }
+  .card .meta { font-size:13.5px; font-weight:500; color:var(--ink-2); margin:2px 0 14px; }
+  .pill { display:inline-flex; align-items:baseline; gap:6px; padding:7px 13px; border-radius:12px; background:rgba(15,169,142,.10); white-space:nowrap; }
+  .pill b { font-family:var(--mono); font-size:19px; font-weight:600; color:var(--teal-600); }
+  .pill em { font-size:12px; font-weight:500; color:rgba(18,51,46,.5); font-style:normal; }
+
+  /* week */
+  .week { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; }
+  .day { border-radius:14px; padding:12px 12px 13px; background:rgba(255,255,255,.45); border:.5px solid rgba(255,255,255,.6); }
+  .day.today { background:rgba(15,169,142,.13); border:1px solid rgba(15,169,142,.4); }
+  .day .d { font-size:12px; font-weight:600; color:var(--ink); margin-bottom:2px; }
+  .day.today .d { color:var(--teal-600); }
+  .day .dt { font-size:11px; font-weight:500; color:rgba(18,51,46,.4); margin-bottom:12px; }
+  .day .row { display:flex; align-items:center; gap:6px; }
+  .day .row + .row { margin-top:6px; }
+  .day .row i { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+  .day .row span { font-family:var(--mono); font-size:12px; font-weight:500; color:var(--ink); }
+  .day .row.dim span { color:rgba(18,51,46,.3); }
+
+  /* activity */
+  .feed { display:flex; flex-direction:column; gap:11px; }
+  .feed .item { display:flex; align-items:center; gap:11px; }
+  .feed .item i { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+  .feed .item .t { font-family:var(--mono); font-size:12px; font-weight:500; color:rgba(18,51,46,.4); width:62px; flex-shrink:0; }
+  .feed .item .m { font-size:13px; font-weight:500; color:#153c36; }
+
+  /* OTP + toast */
+  #otp { display:none; align-items:center; gap:12px; }
+  #otp.show { display:flex; }
+  #otp input { flex:1; height:44px; border-radius:12px; border:.5px solid var(--glass-border); background:rgba(255,255,255,.7);
+    font-family:var(--mono); font-size:18px; letter-spacing:.3em; text-align:center; color:var(--ink); padding:0 12px; }
+  #otp button { height:44px; padding:0 18px; border:none; border-radius:12px; background:var(--teal-600); color:#fff; font-weight:600; font-size:14px; cursor:pointer; }
+
+  /* ── title-bar icon button (gear) ─────────────────────────────────────── */
+  .iconbtn { width:30px; height:30px; border-radius:9px; display:flex; align-items:center; justify-content:center; cursor:pointer;
+    background:rgba(255,255,255,.5); border:.5px solid var(--glass-border); box-shadow:inset 0 1px 0 rgba(255,255,255,.6); transition:background .15s ease; }
+  .iconbtn:hover { background:rgba(255,255,255,.85); }
+
+  /* ── settings sheet ───────────────────────────────────────────────────── */
+  #settings { position:absolute; inset:0; z-index:20; display:none; align-items:flex-start; justify-content:center;
+    padding:64px 24px 24px; background:rgba(8,50,44,.28); backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px); }
+  #settings.show { display:flex; }
+  .sheet { width:100%; max-width:440px; border-radius:22px; padding:22px; background:rgba(255,255,255,.82);
+    backdrop-filter:blur(40px) saturate(180%); -webkit-backdrop-filter:blur(40px) saturate(180%);
+    border:.5px solid rgba(255,255,255,.8); box-shadow:0 24px 60px rgba(4,40,36,.4); }
+  .sheet-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+  .sheet-top h2 { margin:0; font-size:18px; font-weight:650; letter-spacing:-.02em; color:var(--ink); }
+  .sheet .close { width:26px; height:26px; border-radius:8px; border:none; background:rgba(6,60,50,.08); color:var(--ink-2); font-size:15px; cursor:pointer; }
+  .sheet .close:hover { background:rgba(6,60,50,.14); }
+  .sect { margin-top:18px; }
+  .sect > .kicker { display:block; margin-bottom:10px; }
+  .field { display:flex; flex-direction:column; gap:5px; margin-bottom:11px; }
+  .field label { font-size:12px; font-weight:600; color:var(--ink-2); }
+  .field input { height:40px; border-radius:11px; border:.5px solid var(--glass-border); background:rgba(255,255,255,.75);
+    font-size:14px; color:var(--ink); padding:0 12px; font-family:inherit; }
+  .field input:focus { outline:none; border-color:var(--teal-500); box-shadow:0 0 0 3px rgba(15,169,142,.15); }
+  .field.times { flex-direction:row; gap:12px; }
+  .field.times > div { flex:1; display:flex; flex-direction:column; gap:5px; }
+  .field.times input { font-family:var(--mono); letter-spacing:.05em; }
+  .save { height:40px; padding:0 16px; border:none; border-radius:11px; background:var(--teal-600); color:#fff;
+    font-weight:600; font-size:13.5px; cursor:pointer; align-self:flex-end; margin-top:4px; }
+  .save:hover { background:var(--teal-500); }
+  .saved-tag { font-size:12px; font-weight:600; color:var(--present); opacity:0; transition:opacity .2s; }
+  .saved-tag.on { opacity:1; }
+</style>
+</head>
+<body>
+<div id="wall">
+  <div class="blob a"></div><div class="blob b"></div><div class="blob c"></div>
+
+  <div id="win">
+    <div id="titlebar">
+      <div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+      <div class="brand">
+        <div class="logo">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="8.5" stroke="#fff" stroke-width="1.8"/>
+            <path d="M12 7.5V12L15 14" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <span>Auto&#8288;-&#8288;Keka</span>
+      </div>
+      <div class="autopill"><i></i><span>Automation on</span></div>
+      <div class="iconbtn" id="gear" title="Settings">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <line x1="2" y1="5" x2="14" y2="5" stroke="#0f3a34" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="2" y1="11" x2="14" y2="11" stroke="#0f3a34" stroke-width="1.5" stroke-linecap="round"/>
+          <circle cx="10" cy="5" r="2.4" fill="#fff" stroke="#0f3a34" stroke-width="1.5"/>
+          <circle cx="5" cy="11" r="2.4" fill="#fff" stroke="#0f3a34" stroke-width="1.5"/>
+        </svg>
+      </div>
+    </div>
+
+    <div id="content">
+      <!-- HERO -->
+      <div class="hero">
+        <div class="hero-top">
+          <div class="hero-status"><span class="dot" id="statusDot"></span><span class="txt" id="statusText">—</span></div>
+          <span class="hero-date" id="dateText">—</span>
+        </div>
+        <div class="lbl">Time worked today</div>
+        <div class="timer" id="timer">00:00:00</div>
+        <div class="sub" id="punchLine">—</div>
+        <div class="bar"><i id="workBar" style="width:0%"></i></div>
+        <div class="bar-legend"><span id="inLabel">9:00 AM</span><span id="outLabel">6:00 PM</span></div>
+      </div>
+
+      <!-- ACTIONS -->
+      <div class="actions">
+        <div class="btn" data-action="clockIn"><i style="background:var(--present)"></i><span>Clock In</span></div>
+        <div class="btn" data-action="clockOut"><i style="background:var(--out)"></i><span>Clock Out</span></div>
+        <div class="btn" data-action="refresh"><i style="background:var(--teal-500)"></i><span>Refresh</span></div>
+      </div>
+
+      <!-- OTP (hidden until Python asks) -->
+      <div class="card" id="otp">
+        <input id="otpInput" maxlength="8" placeholder="••••••" inputmode="numeric" />
+        <button id="otpSubmit">Submit OTP</button>
+      </div>
+
+      <!-- NEXT PUNCH + SESSION -->
+      <div class="grid2">
+        <div class="card">
+          <div class="head"><i id="nextDot" style="background:var(--out)"></i><span class="kicker">Next scheduled</span></div>
+          <div class="big" id="nextLabel">—</div>
+          <div class="meta" id="nextTime">—</div>
+          <div class="pill"><b id="countdown">—</b><em>from now</em></div>
+        </div>
+        <div class="card">
+          <div class="head"><i id="sessDot" style="background:var(--present)"></i><span class="kicker">Device pass</span></div>
+          <div class="big" id="sessDays" style="white-space:nowrap">—</div>
+          <div class="meta" id="sessExpiry">—</div>
+          <div class="bar"><i id="sessBar" style="width:0%"></i></div>
+        </div>
+      </div>
+
+      <!-- THIS WEEK -->
+      <div class="card">
+        <div class="kicker" style="margin-bottom:16px">This week</div>
+        <div class="week" id="week"></div>
+      </div>
+
+      <!-- ACTIVITY -->
+      <div class="card">
+        <div class="kicker" style="margin-bottom:14px">Activity</div>
+        <div class="feed" id="feed"></div>
+      </div>
+    </div>
+
+    <!-- SETTINGS SHEET (Account + Schedule) -->
+    <div id="settings">
+      <div class="sheet">
+        <div class="sheet-top">
+          <h2>Settings</h2>
+          <button class="close" id="settingsClose">✕</button>
+        </div>
+
+        <div class="sect">
+          <span class="kicker">Account</span>
+          <div class="field"><label>Keka URL</label><input id="cfgUrl" placeholder="https://your-company.keka.com" /></div>
+          <div class="field"><label>Email</label><input id="cfgEmail" placeholder="you@company.com" /></div>
+          <div class="field"><label>Password</label><input id="cfgPass" type="password" placeholder="••••••••" /></div>
+          <div style="display:flex; align-items:center; justify-content:flex-end; gap:12px;">
+            <span class="saved-tag" id="savedCreds">Saved ✓</span>
+            <button class="save" id="saveCreds">Save credentials</button>
+          </div>
+        </div>
+
+        <div class="sect">
+          <span class="kicker">Schedule (Mon–Fri)</span>
+          <div class="field times">
+            <div><label>Clock-in time</label><input id="cfgIn" placeholder="09:00" maxlength="5" /></div>
+            <div><label>Clock-out time</label><input id="cfgOut" placeholder="18:00" maxlength="5" /></div>
+          </div>
+          <div style="display:flex; align-items:center; justify-content:flex-end; gap:12px;">
+            <span class="saved-tag" id="savedSched">Applied ✓</span>
+            <button class="save" id="saveSched">Save &amp; apply schedule</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+/* ============================================================================
+   Auto-Keka UI controller
+   ----------------------------------------------------------------------------
+   This file is FRAMEWORK-FREE on purpose so it can run inside a pywebview
+   window with a thin Python bridge (see README → "Wiring the bridge").
+
+   DATA CONTRACT — the UI expects one object shaped like MOCK below.
+   In production it is fetched from Python via `window.pywebview.api.get_state()`.
+   When pywebview is NOT present (opening the file in a browser), it falls back
+   to MOCK + a live virtual clock so the design is fully previewable.
+   ========================================================================== */
+
+const MOCK = {
+  clockedIn: true,
+  clockInAt:  todayAt(9, 2).getTime(),   // epoch ms
+  clockOutAt: null,                       // epoch ms | null
+  scheduleIn:  "09:00",
+  scheduleOut: "18:00",
+  sessionDaysLeft: 9,                     // from Identity.TwoFactorRememberMe cookie
+  week: [
+    // filled by buildMockWeek() below
+  ],
+  activity: [
+    { time: "09:02", msg: "Auto clock-in succeeded",        kind: "in"  },
+    { time: "08:59", msg: "Session valid — device pass OK",  kind: "info"},
+    { time: "Mon",   msg: "Device pass renewed for 14 days", kind: "info"},
+  ],
+};
+
+/* ── bridge detection ─────────────────────────────────────────────────────
+   Real backend present when window.pywebview.api exists.  All calls are async
+   and return the same shapes as the mock helpers below. */
+const hasBridge = () => !!(window.pywebview && window.pywebview.api);
+const api = {
+  async getState()      { return hasBridge() ? window.pywebview.api.get_state()   : mockState(); },
+  async clockIn()       { return hasBridge() ? window.pywebview.api.clock_in()     : mockPunch("in"); },
+  async clockOut()      { return hasBridge() ? window.pywebview.api.clock_out()    : mockPunch("out"); },
+  async refresh()       { return hasBridge() ? window.pywebview.api.refresh_session() : mockRefresh(); },
+  async submitOtp(code) { return hasBridge() ? window.pywebview.api.submit_otp(code)  : { ok:true }; },
+};
+
+/* ── Python → JS callbacks (Python calls these via window.evaluate_js) ─────── */
+window.KekaUI = {
+  onLog(entry)        { pushActivity(entry); },        // {time,msg,kind}
+  onOtpRequired(retry){ showOtp(!!retry); },
+  onOtpDone()         { hideOtp(); },
+  onState(state)      { STATE = normalize(state); render(); },
+};
+
+/* ── local demo clock (browser-only fallback so timers tick sensibly) ─────── */
+let _base = todayAt(15, 24).getTime(), _mount = Date.now();
+const vnow = () => hasBridge() ? Date.now() : _base + (Date.now() - _mount);
+
+/* ── state ────────────────────────────────────────────────────────────────*/
+let STATE = null;
+
+async function load() {
+  STATE = normalize(await api.getState());
+  render();
+}
+function normalize(s) {
+  s = s || {};
+  if (!s.week || !s.week.length) s.week = buildMockWeek();
+  if (!s.activity) s.activity = MOCK.activity.slice();
+  return s;
+}
+
+/* ── render ─────────────────────────────────────────────────────────────── */
+function render() {
+  if (!STATE) return;
+  const now = vnow();
+  const clockedIn = STATE.clockedIn;
+  const cIn  = STATE.clockInAt  || todayAt(9,2).getTime();
+  const cOut = todayAt(18,0).getTime();
+  const startIn = todayAt(9,0).getTime();
+
+  // hero
+  $("#statusDot").style.background = clockedIn ? "var(--present)" : "var(--out)";
+  $("#statusText").textContent = clockedIn ? "You're clocked in" : "You're clocked out";
+  $("#dateText").textContent = new Date(now).toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});
+  const worked = (clockedIn ? now : (STATE.clockOutAt || cOut)) - cIn;
+  $("#timer").textContent = fmtDur(worked);
+  $("#punchLine").textContent = clockedIn
+    ? `Clocked in at ${fmtHM(new Date(cIn))} · by automation`
+    : `Clocked out at ${fmtHM(new Date(STATE.clockOutAt||cOut))} · ${fmtDur((STATE.clockOutAt||cOut)-cIn)} total`;
+  $("#workBar").style.width = (clockedIn ? clamp((now-startIn)/(cOut-startIn)*100,0,100) : 100).toFixed(1) + "%";
+
+  // next scheduled
+  const nextIsOut = clockedIn;
+  const target = nextIsOut ? cOut : nextMorning(cIn);
+  $("#nextDot").style.background = nextIsOut ? "var(--out)" : "var(--present)";
+  $("#nextLabel").textContent = nextIsOut ? "Auto clock-out" : "Auto clock-in";
+  $("#nextTime").textContent  = nextIsOut ? "Today · 6:00 PM" : "Tomorrow · 9:00 AM";
+  $("#countdown").textContent = fmtCountdown(target - now);
+
+  // session
+  const days = STATE.sessionDaysLeft ?? 9;
+  const low = days <= 3;
+  const expiry = new Date(); expiry.setDate(expiry.getDate() + days);
+  $("#sessDot").style.background = low ? "var(--out)" : "var(--present)";
+  $("#sessDays").textContent = `${days} of 14 days left`;
+  $("#sessExpiry").textContent = `Re-auth by ${expiry.toLocaleDateString("en-US",{month:"short",day:"numeric"})}`;
+  $("#sessBar").style.width = (days/14*100) + "%";
+  $("#sessBar").style.background = low ? "linear-gradient(90deg,#f0a04a,#e8933c)" : "var(--teal-grad)";
+
+  renderWeek(STATE.week);
+  renderFeed(STATE.activity);
+}
+
+function renderWeek(week) {
+  $("#week").innerHTML = week.map(d => `
+    <div class="day${d.today ? " today":""}">
+      <div class="d">${d.day}</div><div class="dt">${d.date}</div>
+      <div class="row${d.dim?" dim":""}"><i style="background:var(--present)"></i><span>${d.in||"—"}</span></div>
+      <div class="row${d.dim?" dim":""}"><i style="background:var(--out)"></i><span>${d.out||"—"}</span></div>
+    </div>`).join("");
+}
+function renderFeed(items) {
+  const color = k => k==="in" ? "var(--present)" : k==="out" ? "var(--out)" : "var(--teal-500)";
+  $("#feed").innerHTML = items.slice(0,5).map(a => `
+    <div class="item"><i style="background:${color(a.kind)}"></i><span class="t">${a.time}</span><span class="m">${a.msg}</span></div>`).join("");
+}
+function pushActivity(entry) {
+  STATE.activity = [entry, ...(STATE.activity||[])].slice(0,5);
+  renderFeed(STATE.activity);
+}
+
+/* ── actions ────────────────────────────────────────────────────────────── */
+document.querySelectorAll(".btn").forEach(b => b.addEventListener("click", async () => {
+  const a = b.dataset.action;
+  if (a === "clockIn")  { const r = await api.clockIn();  afterPunch(r, "in"); }
+  if (a === "clockOut") { const r = await api.clockOut(); afterPunch(r, "out"); }
+  if (a === "refresh")  { const r = await api.refresh();  toastRefresh(r); }
+}));
+function afterPunch(res, action) {
+  if (!hasBridge()) {                              // browser demo: mutate locally
+    if (action==="in")  { if (STATE.clockedIn) return pushActivity({time:hm(),msg:"Already clocked in — no double-punch",kind:"out"});
+                          STATE.clockedIn=true; STATE.clockInAt=vnow(); STATE.clockOutAt=null; pushActivity({time:hm(),msg:"Clocked in",kind:"in"}); }
+    else                { if (!STATE.clockedIn) return pushActivity({time:hm(),msg:"Already clocked out — no double-punch",kind:"out"});
+                          STATE.clockedIn=false; STATE.clockOutAt=vnow(); pushActivity({time:hm(),msg:"Clocked out",kind:"out"}); }
+    render(); return;
+  }
+  // with bridge: Python returns {ok,message}; Python also emits onState + onLog
+  if (res && res.message) pushActivity({time:hm(),msg:res.message,kind:action});
+}
+function toastRefresh(res) {
+  const msg = (res && res.message) || "Session refreshed — device pass valid 14 days";
+  pushActivity({ time: hm(), msg, kind: "info" });
+}
+
+/* ── OTP ────────────────────────────────────────────────────────────────── */
+function showOtp(retry){ $("#otp").classList.add("show"); $("#otpInput").value=""; $("#otpInput").focus();
+  if (retry) $("#otpInput").placeholder = "wrong code — retry"; }
+function hideOtp(){ $("#otp").classList.remove("show"); }
+$("#otpSubmit").addEventListener("click", async () => { const v=$("#otpInput").value.trim(); if(v){ await api.submitOtp(v); hideOtp(); } });
+$("#otpInput").addEventListener("keydown", e => { if(e.key==="Enter") $("#otpSubmit").click(); });
+
+/* ── helpers ────────────────────────────────────────────────────────────── */
+function $(s){ return document.querySelector(s); }
+function todayAt(h,m){ const d=new Date(); d.setHours(h,m,0,0); return d; }
+function pad(n){ return String(n).padStart(2,"0"); }
+function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+function fmtHM(d){ let h=d.getHours(); const m=d.getMinutes(); const ap=h>=12?"PM":"AM"; h%=12; if(!h)h=12; return `${h}:${pad(m)} ${ap}`; }
+function hm(){ return fmtHM(new Date(vnow())).replace(/ ..$/,""); }
+function fmtDur(ms){ ms=Math.max(0,ms); const s=Math.floor(ms/1000); return `${pad(Math.floor(s/3600))}:${pad(Math.floor(s%3600/60))}:${pad(s%60)}`; }
+function fmtCountdown(ms){ ms=Math.max(0,ms); const t=Math.floor(ms/60000), h=Math.floor(t/60), m=t%60; return h>0?`${h}h ${pad(m)}m`:`${m}m`; }
+function nextMorning(cIn){ const d=todayAt(9,0); if(Date.now()>cIn) d.setDate(d.getDate()+1); return d.getTime(); }
+
+function buildMockWeek(){
+  const now=new Date(), dow=(now.getDay()+6)%7, mon=new Date(now); mon.setDate(now.getDate()-dow); mon.setHours(0,0,0,0);
+  const names=["Mon","Tue","Wed","Thu","Fri"], sample=[["9:01","18:03"],["8:58","18:00"],["9:04","18:12"],["9:02","18:05"],["9:00","18:01"]];
+  const todayIdx=Math.min(dow,4);
+  return names.map((day,i)=>{ const d=new Date(mon); d.setDate(mon.getDate()+i);
+    const today=i===todayIdx&&dow<=4; let inT,outT,dim=false;
+    if(i<todayIdx){ [inT,outT]=sample[i]; } else if(today){ inT="9:02"; outT="—"; } else { inT="—"; outT="—"; dim=true; }
+    return { day, date:`${d.getMonth()+1}/${d.getDate()}`, in:inT, out:outT, today, dim }; });
+}
+function mockState(){ const s=JSON.parse(JSON.stringify(MOCK)); s.clockInAt=todayAt(9,2).getTime(); s.week=buildMockWeek(); return s; }
+function mockPunch(){ return { ok:true }; }
+function mockRefresh(){ return { ok:true, message:"Session refreshed — device pass valid 14 days" }; }
+
+/* ── boot ───────────────────────────────────────────────────────────────── */
+/* ── settings sheet ── */
+function openSettings(){
+  $("#cfgUrl").value   = (STATE && STATE.config && STATE.config.url)   || "https://your-company.keka.com";
+  $("#cfgEmail").value = (STATE && STATE.config && STATE.config.email) || "";
+  $("#cfgPass").value  = "";
+  $("#cfgIn").value    = (STATE && STATE.scheduleIn)  || "09:00";
+  $("#cfgOut").value   = (STATE && STATE.scheduleOut) || "18:00";
+  $("#settings").classList.add("show");
+}
+function closeSettings(){ $("#settings").classList.remove("show"); }
+function flashTag(id){ const t=$(id); t.classList.add("on"); setTimeout(()=>t.classList.remove("on"), 1800); }
+const validTime = s => /^([01]?\d|2[0-3]):[0-5]\d$/.test((s||"").trim());
+
+$("#gear").addEventListener("click", openSettings);
+$("#settingsClose").addEventListener("click", closeSettings);
+$("#settings").addEventListener("click", e => { if (e.target.id==="settings") closeSettings(); });
+
+$("#saveCreds").addEventListener("click", async () => {
+  const creds = { url:$("#cfgUrl").value.trim(), email:$("#cfgEmail").value.trim(), password:$("#cfgPass").value };
+  if (hasBridge()) await window.pywebview.api.save_creds(creds);
+  flashTag("#savedCreds");
+  pushActivity({ time: hm(), msg: "Credentials saved", kind: "info" });
+});
+$("#saveSched").addEventListener("click", async () => {
+  const inT=$("#cfgIn").value.trim(), outT=$("#cfgOut").value.trim();
+  if (!validTime(inT) || !validTime(outT)) { alert("Use 24-hour HH:MM, e.g. 09:00 and 18:00."); return; }
+  if (hasBridge()) await window.pywebview.api.apply_schedule({ inTime:inT, outTime:outT });
+  if (STATE){ STATE.scheduleIn=inT; STATE.scheduleOut=outT; }
+  flashTag("#savedSched");
+  pushActivity({ time: hm(), msg: `Schedule set · in ${inT}, out ${outT}`, kind: "info" });
+});
+
+load();
+setInterval(render, 1000);                 // live timer + countdown
+if (hasBridge()) setInterval(load, 30000); // re-pull real state every 30s
+</script>
+</body>
+</html>

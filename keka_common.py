@@ -17,6 +17,8 @@ Design (works around Keka's captcha + 2FA):
 import os
 import sys
 import glob
+import json
+import time
 import shutil
 import base64
 import logging
@@ -355,6 +357,71 @@ def interactive_login(otp_getter, log, headless=True):
             browser.close()
 
 
+# ── Session history log (for the UI activity feed / "previous session info") ──
+HISTORY_FILE = log_path("history.jsonl")
+
+
+def log_history(kind, msg):
+    """Append one activity/session event to logs/history.jsonl.
+    kind: 'in' | 'out' | 'info'. Used by the punch scripts and the UI so you
+    can always see previous clock-ins/outs and refreshes."""
+    entry = {
+        "ts": int(time.time() * 1000),
+        "time": datetime.now().strftime("%H:%M"),
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "kind": kind,
+        "msg": msg,
+    }
+    try:
+        with open(HISTORY_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+        os.chmod(HISTORY_FILE, 0o600)
+    except OSError:
+        pass
+    return entry
+
+
+def read_history(n=200):
+    """Return the last n history entries (oldest→newest)."""
+    if not os.path.exists(HISTORY_FILE):
+        return []
+    out = []
+    try:
+        with open(HISTORY_FILE, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        out.append(json.loads(line))
+                    except ValueError:
+                        pass
+    except OSError:
+        return []
+    return out[-n:]
+
+
+def get_status():
+    """Headless: is the user clocked 'in', 'out', or None (unknown/logged out)?"""
+    if not os.path.exists(SESSION_FILE):
+        return None
+    with sync_playwright() as p:
+        b = p.chromium.launch(headless=True)
+        ctx = b.new_context(storage_state=SESSION_FILE)
+        page = ctx.new_page()
+        try:
+            page.goto(ATTENDANCE_URL, wait_until="domcontentloaded", timeout=30_000)
+            page.wait_for_timeout(5000)
+            if not is_logged_in(page):
+                return None
+            if page.locator('text="Web Clock-out"').count() > 0:
+                return "in"
+            if page.locator('text="Web Clock-In"').count() > 0:
+                return "out"
+            return None
+        finally:
+            b.close()
+
+
 # ── Punch action ──────────────────────────────────────────────────────────────
 def click_punch(page, log, action):
     """
@@ -501,11 +568,13 @@ def run_punch(action, log_file):
         already_out = page.locator('text="Web Clock-In"').count() > 0
         if action == "in" and already_in:
             log.info("Already clocked IN — nothing to do")
+            log_history("in", "Already clocked in — no double-punch")
             browser.close()
             cleanup_pngs(log)
             return
         if action == "out" and already_out:
             log.info("Already clocked OUT — nothing to do")
+            log_history("out", "Already clocked out — no double-punch")
             browser.close()
             cleanup_pngs(log)
             return
@@ -529,6 +598,7 @@ def run_punch(action, log_file):
         page.screenshot(path=shot)
         log.info("Screenshot: %s", shot)
         log.info("=== Punch-%s complete ===", label)
+        log_history(action, f"Clocked {'in' if action == 'in' else 'out'}")
         browser.close()
 
     cleanup_pngs(log)

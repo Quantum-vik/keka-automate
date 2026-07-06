@@ -127,6 +127,26 @@ else
     warn "Unknown package manager — assuming tesseract + tkinter + zenity are already present."
 fi
 
+# Native desktop window (pywebview → WebKitGTK) on Linux. Best-effort: if these
+# don't install, the UI automatically falls back to opening in your browser.
+if [ "$OS" = "Linux" ]; then
+    if command -v apt-get >/dev/null 2>&1; then
+        sudo apt-get install -y python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.1 2>/dev/null \
+            || sudo apt-get install -y python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.0 2>/dev/null \
+            || warn "WebKitGTK not installed — the UI will open in your browser instead."
+    elif command -v dnf >/dev/null 2>&1; then
+        sudo dnf install -y python3-gobject gtk3 webkit2gtk4.1 2>/dev/null \
+            || sudo dnf install -y python3-gobject gtk3 webkit2gtk3 2>/dev/null \
+            || warn "WebKitGTK not installed — the UI will open in your browser instead."
+    elif command -v pacman >/dev/null 2>&1; then
+        sudo pacman -S --needed --noconfirm python-gobject gtk3 webkit2gtk 2>/dev/null \
+            || warn "WebKitGTK not installed — the UI will open in your browser instead."
+    else
+        warn "For a native UI window install WebKitGTK + python-gobject; otherwise the UI opens in your browser."
+    fi
+    ok "native-window deps attempted (browser fallback always works)"
+fi
+
 # ── 6. Credentials (.env) ─────────────────────────────────────────────────────
 b "Setting up credentials (.env)"
 if [ -f ".env" ] && grep -q "KEKA_PASSWORD=" .env && ! grep -q "KEKA_PASSWORD=$" .env; then

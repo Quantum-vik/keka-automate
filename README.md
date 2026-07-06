@@ -77,24 +77,30 @@ you're already clocked in/out, it just shrugs and exits (no double-punching). �
 
 ---
 
-## 🖥️ Desktop app (optional)
+## 🖥️ Desktop app
 
-Prefer buttons over a terminal? There's a little cross-platform control panel:
+Prefer buttons over a terminal? There's a **native "liquid glass" dashboard**:
 
 ```bash
 .venv/bin/python keka_ui.py        # Windows: .venv\Scripts\python keka_ui.py
 ```
 
-From the window you can:
-- 🔐 Set your **Keka URL / email / password** and save them
-- ⏰ Set your **clock-in / clock-out times** and apply the schedule
-- ☀️🌙 **Clock in / out** on demand
-- 🔑 **Login / refresh session** — and when Keka needs the 2FA code, an **OTP box
-  pops up right in the app**: read the code from your email, type it in, done.
-  No browser window, all headless.
+A real desktop window opens showing:
+- ⏱️ **"Am I clocked in?"** hero with a live worked-time timer + workday progress
+- ⏭️ **Next scheduled** punch countdown and **device-pass** (14-day) health
+- 🗓️ **This week** clock-in/out strip and a live **activity** feed
+- ☀️🌙 **Clock in / out** buttons and 🔑 **Refresh session**
+- 🔐 A **Settings** sheet (gear icon) for Keka URL / email / password and
+  clock-in / clock-out times
+- When Keka needs the 2FA code, an **OTP box appears right in the app** — read
+  the code from your email, type it in; login finishes headlessly (no browser popup).
 
-Built with Tkinter (Python's built-in GUI) so it runs on macOS, Linux, and
-Windows. On Linux it needs `python3-tk` (the installer adds it).
+**How it renders (cross-platform):** a native window via
+[pywebview](https://pywebview.flowlib.org/) — macOS **WebKit**, Windows
+**WebView2**, Linux **WebKitGTK**. If a machine has no webview backend, it
+automatically **falls back to opening the same dashboard in your default
+browser**, so it works everywhere. Every action is recorded in
+`logs/history.jsonl` so you can see previous sessions.
 
 ---
 

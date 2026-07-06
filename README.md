@@ -1,131 +1,197 @@
-# Keka Auto Attendance
+# 🕘 Keka Automate
 
-Automatically clocks in/out on your Keka HR portal (`https://<company-name>.keka.com`)
-via Playwright. **Cross-platform** — runs on macOS, Linux, and Windows.
+> Your robot coworker who never forgets to clock in. ☕
 
-## Files
-| File | Purpose |
-|------|---------|
-| `keka_common.py` | Shared logic: captcha OCR, login, session, auto-relogin, clock in/out |
-| `keka_setup.py`  | Interactive login + 2FA OTP → saves `session.json` (auto-opened when needed) |
-| `keka_punch_in.py`  | Clocks IN using saved session (auto-relogins if expired) |
-| `keka_punch_out.py` | Clocks OUT using saved session (auto-relogins if expired) |
-| `keka_check.py`  | Reauth watchdog: opens `keka_setup.py` when the ~14-day cookie is near expiry |
-| `session.json`   | Saved auth session (cookies + tokens) |
-| `.env`           | Credentials (`KEKA_EMAIL`, `KEKA_PASSWORD`), `chmod 600` |
-| `requirements.txt` | Python deps (playwright, pytesseract, pillow) |
-| `scheduling/`    | Per-OS installers: `install_macos.sh`, `install_linux.sh`, `install_windows.ps1` |
-| `logs/`          | Run logs (same path on every OS) |
-| `.venv/`         | Python virtual environment |
+Ever sprinted to your laptop at 9:01 AM just to hit **Web Clock-In**? Or gotten
+home and realized you never clocked out? Yeah. This fixes that.
 
-## Install (any OS)
+**Keka Automate** logs into your [Keka](https://www.keka.com/) HR portal and
+punches you **in at 9 AM** and **out at 6 PM**, Monday to Friday — automatically,
+in the background, on **macOS, Linux, and Windows**. It even solves the login
+captcha itself. 🤖
+
+---
+
+## ✨ The magic in one picture
+
+```
+   9:00 AM ──►  🤖 opens Keka  ──►  ✅ Clock-In     ──►  you're marked present
+   6:00 PM ──►  🤖 opens Keka  ──►  ✅ Clock-Out    ──►  you're marked done
+                        │
+                        └─ session expired? ──► 🔓 re-logs in by itself
+                                                 (solves captcha, no you needed)
+```
+
+You do **nothing** day-to-day. The only time it needs you is once every ~2 weeks
+for a 10-second security code (more on that below 👇).
+
+---
+
+## 🧠 Why this is trickier than it sounds
+
+Keka doesn't just let a robot walk in. It throws up **three walls**:
+
+| Wall | What it is | How we get past it |
+|------|-----------|--------------------|
+| 🔑 Password | Standard login | Stored safely in a local `.env` file |
+| 🔡 Captcha | Squiggly text image | Read automatically with **OCR** (tesseract) |
+| 📱 2FA / OTP | One-time code to your phone/email | **You** type it — *once every ~14 days* |
+
+Here's the clever part: after you enter the OTP **once**, Keka hands out a
+**"remember this device" pass that's good for ~14 days**. During those two weeks,
+the robot can re-login all by itself (password + captcha, **no OTP**). So you go
+from "log in every single day" → "tap a code roughly twice a month." 🎉
+
+---
+
+## 🎬 How it actually works
+
+There are 5 small scripts. Think of them as a little crew:
+
+| Script | Role | Nickname |
+|--------|------|----------|
+| `keka_setup.py` | Logs in + you enter the OTP once → saves your session | 🪪 The Bouncer |
+| `keka_punch_in.py` | Clocks you IN | ☀️ Morning Person |
+| `keka_punch_out.py` | Clocks you OUT | 🌙 Night Owl |
+| `keka_check.py` | Watches the ~14-day pass; nudges you before it expires | 🐕 The Watchdog |
+| `keka_common.py` | Shared brains (login, captcha, session, clicking) | 🧠 The Brain |
+
+**The flow:**
+1. **Once:** run `keka_setup.py` → it fills your password, reads the captcha, you
+   type the OTP → your logged-in session is saved to `session.json`.
+2. **Every day:** the punch scripts reuse that session and click the button. If
+   the session went stale, they **quietly re-login themselves**.
+3. **Every ~14 days:** the Watchdog notices the "remember me" pass is about to
+   expire, **pops open the browser + a notification**, you type one OTP, and
+   you're set for another two weeks.
+
+That's it. Clock-in is a single click; clock-out is a two-click confirm; and if
+you're already clocked in/out, it just shrugs and exits (no double-punching). 🙌
+
+---
+
+## 🚀 Setup (any OS, ~5 minutes)
+
 ```bash
-# 1. Python env + deps
+# 1) Python environment + libraries
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt          # Windows: .venv\Scripts\pip
 .venv/bin/python -m playwright install chromium
 
-# 2. Install tesseract OCR engine (system package):
-#    macOS:   brew install tesseract
-#    Linux:   sudo apt install tesseract-ocr
-#    Windows: install from github.com/UB-Mannheim/tesseract (auto-detected)
+# 2) Install tesseract (the captcha reader)
+#    macOS:    brew install tesseract
+#    Linux:    sudo apt install tesseract-ocr
+#    Windows:  grab it from github.com/UB-Mannheim/tesseract  (auto-detected)
 
-# 3. Create .env with your credentials (see below), then log in once:
-.venv/bin/python keka_setup.py                     # enter the OTP in the browser
+# 3) Add your details to a .env file (see below) and log in once
+.venv/bin/python keka_setup.py                     # a browser opens → type your OTP
 
-# 4. Schedule it (pick your OS):
-bash scheduling/install_macos.sh                   # macOS  (launchd)
-bash scheduling/install_linux.sh                   # Linux  (cron)
-powershell -ExecutionPolicy Bypass -File scheduling\install_windows.ps1   # Windows (Task Scheduler)
+# 4) Put it on autopilot — pick your OS
+bash scheduling/install_macos.sh                                         # 🍎 macOS  (launchd)
+bash scheduling/install_linux.sh                                         # 🐧 Linux  (cron)
+powershell -ExecutionPolicy Bypass -File scheduling\install_windows.ps1  # 🪟 Windows (Task Scheduler)
 ```
 
-Portability notes: logs go to `./logs/` on every OS; tesseract is found via PATH
-or standard install dirs; notifications use osascript (macOS) / notify-send
-(Linux) / PowerShell toast (Windows); the reauth dialog falls back to tkinter
-so it works everywhere.
+### 🔐 Your `.env` file
+Create a file named `.env` next to the scripts (it's **git-ignored — never
+uploaded**):
 
-## Credentials & tenant
-Stored in `.env` (owner-only, `chmod 600`), read by `keka_common.py`:
-```
-KEKA_BASE_URL=https://<company-name>.keka.com
-KEKA_EMAIL=you@example.com
-KEKA_PASSWORD=yourpassword
-```
-Set `KEKA_BASE_URL` to your organization's Keka subdomain. Environment variables
-of the same name override the file. `.env` is gitignored — never committed.
-
-## How it works
-Keka enforces **captcha + 2FA (email/mobile OTP)** after password login. The OTP
-can't be automated, so:
-
-- **`keka_setup.py`:** does password + OCR-captcha, you enter the OTP once. Keka
-  then sets a **`TwoFactorRememberMe` cookie (~14 days)** = "trust this device,
-  skip OTP". The full session is saved to `session.json`.
-- **Punch scripts:** load `session.json` and click punch. If the session has
-  expired, they **auto-relogin** with password + OCR-captcha only — **no OTP**
-  while the remember-device cookie is valid — then re-save the session.
-- **`keka_check.py` (reauth watchdog):** runs daily + at login. The remember
-  cookie does NOT refresh on relogin, so ~every 14 days it lapses. When it's
-  within ~1.5 days of expiry, the watchdog **auto-opens the browser** (via
-  `keka_setup.py`) and posts a notification so you just enter the OTP. Otherwise
-  it exits silently.
-
-So the only manual step, ~once every 14 days: **type the OTP into a browser that
-opens itself.** Everything else is hands-off.
-
-- **Clock-in**: single click of "Web Clock-In".
-- **Clock-out**: two clicks — "Web Clock-out" then the red "Clock-out" confirm.
-- **Idempotent**: if already in the target state, it logs and exits cleanly.
-- **Captcha OCR**: tesseract; rejects bad-length reads, retries up to 12×.
-
-## Schedule
-Same three jobs on every OS (installed by the `scheduling/` script for your OS):
-
-| Job | When | Action |
-|-----|------|--------|
-| punch in  | 9:00 AM Mon–Fri  | clock in |
-| punch out | 6:00 PM Mon–Fri  | clock out |
-| reauth    | 10:00 AM daily + at login | open OTP browser only if the ~14-day cookie is near expiry |
-
-Logs: `logs/keka_punch_in.log`, `logs/keka_punch_out.log`, `logs/keka_reauth.log`
-
-- **macOS (launchd):** re-runs missed jobs on wake, runs in your GUI session so
-  the reauth browser can appear. **No Full Disk Access needed.**
-- **Linux (cron):** punch jobs are headless; the reauth job passes `DISPLAY` so
-  the browser can open on your desktop.
-- **Windows (Task Scheduler):** reauth tasks use `/IT` (interactive) so the
-  browser + dialog appear.
-
-### Managing (macOS)
-```bash
-UID=$(id -u)
-launchctl list | grep keka                              # status
-launchctl kickstart -k gui/$UID/com.keka.punchin        # run now (test)
-launchctl bootout   gui/$UID/com.keka.punchin           # disable one
-bash scheduling/install_macos.sh                        # (re)install all
-```
-### Managing (Linux)
-```bash
-crontab -l                                              # view
-crontab -l | grep -v 'keka_' | crontab -                # remove keka jobs
-```
-### Managing (Windows)
-```powershell
-schtasks /Query /FO LIST /TN Keka\PunchIn               # status
-schtasks /Delete /F /TN Keka\PunchIn                    # remove one (also PunchOut, Reauth, ReauthLogon)
+```ini
+KEKA_BASE_URL=https://your-company.keka.com
+KEKA_EMAIL=you@company.com
+KEKA_PASSWORD=your-password
 ```
 
-## Manual run / test
+> 💡 `KEKA_BASE_URL` is just your company's Keka web address. On macOS/Linux, lock
+> the file down with `chmod 600 .env` so only you can read it.
+
+---
+
+## ⏰ The schedule
+
+Same three jobs on every OS (set up by the installer for your platform):
+
+| Job | When | What it does |
+|-----|------|--------------|
+| ☀️ Punch in  | 9:00 AM, Mon–Fri | Clock in |
+| 🌙 Punch out | 6:00 PM, Mon–Fri | Clock out |
+| 🐕 Watchdog  | 10:00 AM daily + at login | Only bugs you if the ~14-day pass is about to expire |
+
+**Under the hood, per OS:**
+- 🍎 **macOS (launchd)** — re-runs missed jobs when your Mac wakes, and can pop
+  the login browser. *No Full Disk Access needed.*
+- 🐧 **Linux (cron)** — headless punches; the watchdog gets `DISPLAY` so the
+  browser can appear.
+- 🪟 **Windows (Task Scheduler)** — watchdog runs interactively so its window
+  shows up.
+
+📁 Logs land in `logs/` (same place on every OS): `keka_punch_in.log`,
+`keka_punch_out.log`, `keka_reauth.log`.
+
+---
+
+## 🎮 Handy commands
+
+**Run something right now (test it):**
 ```bash
 .venv/bin/python keka_punch_in.py     # clock in now   (Windows: .venv\Scripts\python)
 .venv/bin/python keka_punch_out.py    # clock out now
 .venv/bin/python keka_setup.py        # force a fresh OTP login
-.venv/bin/python keka_check.py        # run the reauth check now
+.venv/bin/python keka_check.py        # run the watchdog check now
 ```
 
-## Notes
-- **Machine must be awake around 9 AM / 6 PM** for the punch to fire. macOS
-  launchd runs missed jobs on the next wake; cron/Task Scheduler behavior varies.
-- First time the reauth watchdog notifies you, the OS may ask to allow
-  notifications — allow it so you're told when to enter the OTP. Either way the
-  blocking dialog is the guaranteed alert.
+**Manage the schedule:**
+```bash
+# 🍎 macOS
+launchctl list | grep keka                          # status
+launchctl kickstart -k gui/$(id -u)/com.keka.punchin  # run now
+bash scheduling/install_macos.sh                    # (re)install everything
+
+# 🐧 Linux
+crontab -l                                          # view jobs
+crontab -l | grep -v 'keka_' | crontab -            # remove keka jobs
+
+# 🪟 Windows
+schtasks /Query /FO LIST /TN Keka\PunchIn           # status
+schtasks /Delete /F /TN Keka\PunchIn                # remove (also PunchOut, Reauth, ReauthLogon)
+```
+
+---
+
+## 🧩 Good to know
+
+- 💤 **Your computer has to be awake** around 9 AM / 6 PM for the punch to fire.
+  macOS runs missed jobs on the next wake; cron/Task Scheduler are stricter.
+- 🔔 The first time the Watchdog alerts you, your OS may ask permission to show
+  notifications — say yes. (There's also a pop-up dialog as a backup, so you
+  won't miss it either way.)
+- 🙅 **It never double-punches.** Already clocked in? It just exits quietly.
+
+---
+
+## 📁 What's in the box
+
+```
+keka_setup.py          🪪  one-time login + OTP → saves session
+keka_punch_in.py       ☀️  clock in
+keka_punch_out.py      🌙  clock out
+keka_check.py          🐕  reauth watchdog
+keka_common.py         🧠  shared logic (login, captcha OCR, session, clicking)
+requirements.txt       📦  Python dependencies
+scheduling/            ⏰  install_macos.sh · install_linux.sh · install_windows.ps1
+.env                   🔐  your secrets (git-ignored)
+session.json           🍪  saved login (git-ignored)
+logs/                  📄  run logs (git-ignored)
+```
+
+---
+
+## ⚠️ Use responsibly
+
+This is a personal-productivity toy built to learn browser automation. Automating
+attendance may go against your company's policies — **check first, and only log
+time you actually work.** You're responsible for how you use it. 🙏
+
+---
+
+<sub>Built with 🐍 Python + 🎭 Playwright + 👁️ tesseract OCR.</sub>

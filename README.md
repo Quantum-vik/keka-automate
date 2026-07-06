@@ -231,6 +231,45 @@ Same three jobs on every OS (set up by the installer for your platform):
 
 ---
 
+## 🌍 Cross-platform — run it + what's under the hood
+
+### Run it on each OS
+| | 🍎 macOS | 🐧 Linux | 🪟 Windows |
+|--|---------|---------|-----------|
+| **Install** | `./setup.sh` | `./setup.sh` | `powershell -ExecutionPolicy Bypass -File setup.ps1` |
+| **Make an app** | `bash packaging/build_macos_app.sh` | `bash packaging/build_linux_app.sh` | `powershell ... packaging\build_windows_app.ps1` |
+| **Open the app** | double-click **Auto-Keka.app** | "Auto-Keka" in the apps menu | "Auto-Keka" Desktop/Start shortcut |
+| **…or from terminal** | `.venv/bin/python keka_ui.py` | `.venv/bin/python keka_ui.py` | `.venv\Scripts\python keka_ui.py` |
+
+### What the scripts do, per OS
+It's **one codebase**. The Python automation core (`keka_common.py`, the
+punch/setup/check scripts) is **identical everywhere** — only the OS "glue" is
+auto-selected at runtime (`sys.platform` in Python, `uname`/detection in the
+installers). You never pass an OS flag.
+
+| Concern | 🍎 macOS | 🐧 Linux | 🪟 Windows |
+|---------|---------|---------|-----------|
+| **Scheduler** (the "agents") | launchd LaunchAgents<br>`~/Library/LaunchAgents/com.keka.*.plist` | cron (`crontab`) | Task Scheduler (`\Keka\` tasks) |
+| ↳ created by | `scheduling/install_macos.sh` | `scheduling/install_linux.sh` | `scheduling/install_windows.ps1` |
+| **Desktop window** | pywebview → WebKit | pywebview → WebKitGTK<br>(else browser fallback) | pywebview → WebView2 |
+| **Captcha OCR** | tesseract (Homebrew) | tesseract (apt/dnf/pacman/zypper) | tesseract (winget + `Program Files` probe) |
+| **Re-auth alert** | osascript notification + dialog | `notify-send` + `zenity`<br>(else tkinter) | PowerShell toast + `MessageBox` |
+| **Logs / session** | `logs/` beside the code; `session.json` locked `600` | same | same (paths via `os.path`) |
+
+### What's generated vs. shipped
+The repo ships the **generators**; the machine-specific artifacts are **built on
+first setup** and never committed:
+- **Schedule jobs** (plists / cron lines / scheduled tasks) → created by
+  `scheduling/install_*` with absolute paths for *your* install.
+- **App bundle + icon** (`Auto-Keka.app` / `.desktop` / `.lnk`) → created by
+  `packaging/build_*` from the shared `packaging/make_icon.py`.
+
+So "the launchd agents" on macOS = cron on Linux = scheduled tasks on Windows:
+**same three jobs, each OS's native scheduler, all produced by the repo's
+installer — not stored in the repo.**
+
+---
+
 ## 🎮 Handy commands
 
 **Run something right now (test it):**

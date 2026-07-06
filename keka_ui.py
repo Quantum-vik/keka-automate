@@ -16,6 +16,28 @@ Everything runs on a background thread so the window never freezes.
 
 import os
 import sys
+import glob
+
+
+def _fix_tcl_paths():
+    """Standalone/uv Pythons in a venv can't find Tcl/Tk (it searches the venv
+    prefix, but the files live under the base interpreter). Point TCL_LIBRARY /
+    TK_LIBRARY at the base prefix's tcl*/tk* dirs so tkinter loads everywhere."""
+    if os.environ.get("TCL_LIBRARY") and os.environ.get("TK_LIBRARY"):
+        return
+    base = getattr(sys, "base_prefix", sys.prefix)
+    for lib in sorted(glob.glob(os.path.join(base, "lib", "tcl*")), reverse=True):
+        if os.path.exists(os.path.join(lib, "init.tcl")):
+            os.environ.setdefault("TCL_LIBRARY", lib)
+            break
+    for lib in sorted(glob.glob(os.path.join(base, "lib", "tk*")), reverse=True):
+        if os.path.exists(os.path.join(lib, "tk.tcl")):
+            os.environ.setdefault("TK_LIBRARY", lib)
+            break
+
+
+_fix_tcl_paths()
+
 import queue
 import logging
 import threading

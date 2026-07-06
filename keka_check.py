@@ -24,6 +24,18 @@ BUFFER_DAYS = 1.5  # prompt this many days before the remember-cookie expires
 TITLE = "Keka Attendance"
 
 
+def _ps_str(s):
+    """Wrap s as a safe PowerShell single-quoted string literal ('' escapes ')."""
+    return "'" + str(s).replace("'", "''") + "'"
+
+
+def _has_display():
+    """True if a GUI is reachable. On headless Linux there's no browser/dialog."""
+    if sys.platform.startswith("linux"):
+        return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    return True  # macOS/Windows GUI sessions always have a display
+
+
 def notify(message):
     """Best-effort desktop notification (non-blocking). Silent if unsupported."""
     plat = sys.platform
@@ -38,14 +50,18 @@ def notify(message):
             if shutil.which("notify-send"):
                 subprocess.run(["notify-send", TITLE, message], check=False)
         elif plat.startswith("win"):
-            # PowerShell balloon tip — no external deps
+            # PowerShell tray balloon — load both assemblies, pump the message
+            # queue (DoEvents) so the balloon actually renders, then dispose.
             ps = (
                 'Add-Type -AssemblyName System.Windows.Forms;'
+                'Add-Type -AssemblyName System.Drawing;'
                 '$n=New-Object System.Windows.Forms.NotifyIcon;'
                 '$n.Icon=[System.Drawing.SystemIcons]::Information;'
-                '$n.BalloonTipTitle=' + repr(TITLE) + ';'
-                '$n.BalloonTipText=' + repr(message) + ';'
-                '$n.Visible=$true;$n.ShowBalloonTip(10000);Start-Sleep -Seconds 6;'
+                '$n.BalloonTipTitle=' + _ps_str(TITLE) + ';'
+                '$n.BalloonTipText=' + _ps_str(message) + ';'
+                '$n.Visible=$true;$n.ShowBalloonTip(5000);'
+                '[System.Windows.Forms.Application]::DoEvents();'
+                'Start-Sleep -Milliseconds 6000;$n.Dispose();'
             )
             subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=False)
     except Exception:
@@ -76,11 +92,13 @@ def confirm_dialog(message):
             )
             return r.returncode == 0
         if plat.startswith("win"):
-            import ctypes  # MessageBoxW: 4=YesNo, 0x30=warning icon; 6=Yes
+            import ctypes
+            # MB_YESNO(0x04) | MB_ICONWARNING(0x30) | MB_SETFOREGROUND(0x10000)
+            # SETFOREGROUND brings the box to front so it isn't lost behind windows.
             res = ctypes.windll.user32.MessageBoxW(
-                0, message + "\n\nOpen the login browser now?", title, 0x04 | 0x30
+                0, message + "\n\nOpen the login browser now?", title, 0x04 | 0x30 | 0x10000
             )
-            return res == 6
+            return res == 6  # IDYES
     except Exception:
         pass
 
@@ -102,7 +120,7 @@ def remember_cookie_expiry():
     """Unix ts when Identity.TwoFactorRememberMe expires, or None if absent."""
     if not os.path.exists(kc.SESSION_FILE):
         return None
-    with open(kc.SESSION_FILE) as f:
+    with open(kc.SESSION_FILE, encoding="utf-8") as f:
         s = json.load(f)
     for c in s.get("cookies", []):
         if c["name"] == "Identity.TwoFactorRememberMe":
@@ -112,6 +130,11 @@ def remember_cookie_expiry():
 
 
 def launch_setup(log):
+    # On a headless box there is no browser/dialog — don't crash Playwright.
+    if not _has_display():
+        log.error("No display detected — cannot open the login browser. "
+                  "SSH in and run:  python keka_setup.py  to renew the session.")
+        return
     notify("Keka needs a quick re-login — please enter the OTP.")
     proceed = confirm_dialog(
         "Keka needs a quick re-login to keep auto-attendance working.\\n\\n"
@@ -120,7 +143,9 @@ def launch_setup(log):
     if not proceed:
         log.info("User chose 'Remind me later' — will re-prompt on the next check")
         return
-    py    = os.path.join(kc.SCRIPT_DIR, ".venv", "bin", "python")
+    # sys.executable is the venv python already running this script — portable
+    # across .venv/bin/python (Unix) and .venv\Scripts\python.exe (Windows).
+    py    = sys.executable
     setup = os.path.join(kc.SCRIPT_DIR, "keka_setup.py")
     log.info("Launching interactive setup: %s %s", py, setup)
     subprocess.run([py, setup], check=False)

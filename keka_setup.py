@@ -14,6 +14,7 @@ session.json and the cron punch scripts will reuse it — no login or OTP needed
 until it expires.
 """
 
+import os
 import sys
 from datetime import datetime
 from playwright.sync_api import sync_playwright
@@ -33,8 +34,13 @@ def main():
         sys.exit(1)
 
     with sync_playwright() as p:
-        # Headful so you can complete the OTP step yourself
-        browser = p.chromium.launch(headless=False, slow_mo=150)
+        # Headful so you can complete the OTP step yourself. On a pure-Wayland
+        # session (no XWayland) Chromium needs to be told to use the Wayland
+        # backend, or the window may fail to open.
+        launch_args = []
+        if os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("DISPLAY"):
+            launch_args = ["--ozone-platform=wayland"]
+        browser = p.chromium.launch(headless=False, slow_mo=150, args=launch_args)
         ctx     = browser.new_context()
         page    = ctx.new_page()
 
@@ -69,7 +75,7 @@ def main():
 
         # Logged in — save the session IMMEDIATELY (it's valid now).
         log.info("Login detected — saving session")
-        ctx.storage_state(path=kc.SESSION_FILE)
+        kc.save_session(ctx)
         log.info("Session saved to %s", kc.SESSION_FILE)
 
         # Best-effort: warm up the attendance page so tokens for that origin
@@ -77,13 +83,13 @@ def main():
         try:
             page.goto(kc.ATTENDANCE_URL, wait_until="domcontentloaded", timeout=30_000)
             page.wait_for_timeout(5000)
-            ctx.storage_state(path=kc.SESSION_FILE)  # re-save with attendance-origin state
+            kc.save_session(ctx)  # re-save with attendance-origin state
             log.info("Attendance page warmed up, session re-saved")
         except Exception as e:
             log.warning("Attendance warm-up skipped (%s) — session already saved", e)
 
-        print(f"\n✅ Session saved to {kc.SESSION_FILE}")
-        print("   The cron punch scripts will now run without login/OTP.\n")
+        print(f"\n[OK] Session saved to {kc.SESSION_FILE}")
+        print("   The scheduled punch scripts will now run without login/OTP.\n")
 
         browser.close()
 

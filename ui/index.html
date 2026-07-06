@@ -10,7 +10,7 @@
     margin: 0; padding: 0; height: 100%;
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "Helvetica Neue", sans-serif;
     -webkit-user-select: none; user-select: none;
-    background: linear-gradient(150deg,#0e5f57 0%,#0a7d70 38%,#12a892 72%,#3fc9b0 100%);
+    background: #e9f2ef;
     overflow: hidden;
   }
   /* ── design tokens (see README → Design Tokens) ───────────────────────── */
@@ -25,8 +25,8 @@
   a { color: var(--teal-600); }
   a:hover { color: var(--teal-500); }
 
-  #wall { position: relative; height: 100%; width: 100%; display:flex; align-items:center; justify-content:center; padding:40px 24px; overflow:hidden; }
-  .blob { position:absolute; border-radius:50%; pointer-events:none; }
+  #wall { position: relative; height: 100%; width: 100%; overflow:hidden; }
+  .blob { display:none; }
   .blob.a { top:-140px; left:-120px; width:520px; height:520px; filter:blur(20px);
     background:radial-gradient(circle at 30% 30%, rgba(120,255,220,.55), rgba(120,255,220,0) 70%); animation:driftA 22s ease-in-out infinite; }
   .blob.b { bottom:-160px; right:-100px; width:560px; height:560px; filter:blur(20px);
@@ -38,9 +38,8 @@
   @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(23,182,122,.55);} 70%{box-shadow:0 0 0 8px rgba(23,182,122,0);} 100%{box-shadow:0 0 0 0 rgba(23,182,122,0);} }
 
   /* ── window chrome ───────────────────────────────────────────────────── */
-  #win { position:relative; width:800px; max-width:100%; border-radius:26px; overflow:hidden;
-    background:var(--glass-strong); backdrop-filter:blur(50px) saturate(180%); -webkit-backdrop-filter:blur(50px) saturate(180%);
-    border:.5px solid rgba(255,255,255,.7); box-shadow:0 0 0 1px rgba(6,50,44,.14), 0 30px 80px rgba(4,40,36,.45); }
+  #win { position:relative; width:100%; height:100vh; border-radius:0; overflow:hidden;
+    display:flex; flex-direction:column; background:#eef4f2; border:none; box-shadow:none; }
   #titlebar { display:flex; align-items:center; gap:12px; height:52px; padding:0 18px;
     border-bottom:.5px solid rgba(6,60,50,.10); background:rgba(255,255,255,.28); }
   .lights { display:flex; gap:8px; align-items:center; }
@@ -54,7 +53,7 @@
   .autopill i { width:7px; height:7px; border-radius:50%; background:var(--present); }
   .autopill span { font-size:11.5px; font-weight:600; color:#0b7d54; }
 
-  #content { padding:22px; display:flex; flex-direction:column; gap:16px; max-height:82vh; overflow:auto; }
+  #content { padding:22px; display:flex; flex-direction:column; gap:16px; flex:1; min-height:0; overflow:auto; }
   .card { border-radius:20px; padding:20px; background:var(--glass); border:.5px solid var(--glass-border);
     box-shadow:0 8px 28px rgba(6,60,50,.10), inset 0 1px 0 rgba(255,255,255,.6); }
   .kicker { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-2); }
@@ -128,11 +127,11 @@
 
   /* ── settings sheet ───────────────────────────────────────────────────── */
   #settings { position:absolute; inset:0; z-index:20; display:none; align-items:flex-start; justify-content:center;
-    padding:64px 24px 24px; background:rgba(8,50,44,.28); backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px); }
+    padding:40px 24px; overflow-y:auto; background:rgba(6,40,35,.55); backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px); }
   #settings.show { display:flex; }
-  .sheet { width:100%; max-width:440px; border-radius:22px; padding:22px; background:rgba(255,255,255,.82);
+  .sheet { width:100%; max-width:440px; margin:auto; border-radius:22px; padding:24px; background:rgba(255,255,255,.78);
     backdrop-filter:blur(40px) saturate(180%); -webkit-backdrop-filter:blur(40px) saturate(180%);
-    border:.5px solid rgba(255,255,255,.8); box-shadow:0 24px 60px rgba(4,40,36,.4); }
+    border:.5px solid rgba(255,255,255,.85); box-shadow:0 24px 70px rgba(4,40,36,.5); }
   .sheet-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
   .sheet-top h2 { margin:0; font-size:18px; font-weight:650; letter-spacing:-.02em; color:var(--ink); }
   .sheet .close { width:26px; height:26px; border-radius:8px; border:none; background:rgba(6,60,50,.08); color:var(--ink-2); font-size:15px; cursor:pointer; }
@@ -141,17 +140,27 @@
   .sect > .kicker { display:block; margin-bottom:10px; }
   .field { display:flex; flex-direction:column; gap:5px; margin-bottom:11px; }
   .field label { font-size:12px; font-weight:600; color:var(--ink-2); }
-  .field input { height:40px; border-radius:11px; border:.5px solid var(--glass-border); background:rgba(255,255,255,.75);
+  .field input { width:100%; min-width:0; height:40px; border-radius:11px; border:.5px solid var(--glass-border); background:rgba(255,255,255,.75);
     font-size:14px; color:var(--ink); padding:0 12px; font-family:inherit; }
   .field input:focus { outline:none; border-color:var(--teal-500); box-shadow:0 0 0 3px rgba(15,169,142,.15); }
   .field.times { flex-direction:row; gap:12px; }
-  .field.times > div { flex:1; display:flex; flex-direction:column; gap:5px; }
+  .field.times > div { flex:1; min-width:0; display:flex; flex-direction:column; gap:5px; }
   .field.times input { font-family:var(--mono); letter-spacing:.05em; }
   .save { height:40px; padding:0 16px; border:none; border-radius:11px; background:var(--teal-600); color:#fff;
     font-weight:600; font-size:13.5px; cursor:pointer; align-self:flex-end; margin-top:4px; }
   .save:hover { background:var(--teal-500); }
   .saved-tag { font-size:12px; font-weight:600; color:var(--present); opacity:0; transition:opacity .2s; }
   .saved-tag.on { opacity:1; }
+  /* account: configured summary */
+  .acct-card { border:.5px solid rgba(6,60,50,.12); border-radius:14px; padding:14px 16px; margin-bottom:12px;
+    background:rgba(255,255,255,.5); }
+  .acct-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:4px 0; }
+  .acct-k { font-size:12.5px; font-weight:600; color:var(--ink-2); }
+  .acct-v { font-size:13.5px; font-weight:500; color:var(--ink); max-width:64%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .acct-ok { display:flex; align-items:center; gap:7px; margin-top:8px; font-size:12px; font-weight:600; color:#0b7d54; }
+  .acct-ok .dot { width:7px; height:7px; border-radius:50%; background:var(--present); }
+  .save.ghost { background:rgba(6,60,50,.06); color:var(--teal-600); border:.5px solid rgba(6,60,50,.14); }
+  .save.ghost:hover { background:rgba(6,60,50,.12); }
 </style>
 </head>
 <body>
@@ -160,8 +169,12 @@
 
   <div id="win">
     <div id="titlebar">
-      <div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
-      <div class="brand">
+      <div class="lights">
+        <i style="background:#ff5f57;cursor:pointer" title="Close"    onclick="winClose()"></i>
+        <i style="background:#febc2e;cursor:pointer" title="Minimize" onclick="winMinimize()"></i>
+        <i style="background:#28c840"></i>
+      </div>
+      <div class="brand pywebview-drag-region">
         <div class="logo">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
             <circle cx="12" cy="12" r="8.5" stroke="#fff" stroke-width="1.8"/>
@@ -247,12 +260,29 @@
 
         <div class="sect">
           <span class="kicker">Account</span>
-          <div class="field"><label>Keka URL</label><input id="cfgUrl" placeholder="https://your-company.keka.com" /></div>
-          <div class="field"><label>Email</label><input id="cfgEmail" placeholder="you@company.com" /></div>
-          <div class="field"><label>Password</label><input id="cfgPass" type="password" placeholder="••••••••" /></div>
-          <div style="display:flex; align-items:center; justify-content:flex-end; gap:12px;">
-            <span class="saved-tag" id="savedCreds">Saved ✓</span>
-            <button class="save" id="saveCreds">Save credentials</button>
+
+          <!-- Configured: compact summary + Update -->
+          <div id="acctConfigured" style="display:none;">
+            <div class="acct-card">
+              <div class="acct-row"><span class="acct-k">Keka URL</span><span class="acct-v" id="acctUrl">—</span></div>
+              <div class="acct-row"><span class="acct-k">Email</span><span class="acct-v" id="acctEmail">—</span></div>
+              <div class="acct-row"><span class="acct-k">Password</span><span class="acct-v">••••••••</span></div>
+              <div class="acct-ok"><span class="dot"></span>Configured</div>
+            </div>
+            <div style="display:flex; justify-content:flex-end;">
+              <button class="save ghost" id="acctUpdate">Update</button>
+            </div>
+          </div>
+
+          <!-- Not configured (or editing): the form -->
+          <div id="acctEdit">
+            <div class="field"><label>Keka URL</label><input id="cfgUrl" placeholder="https://your-company.keka.com" /></div>
+            <div class="field"><label>Email</label><input id="cfgEmail" placeholder="you@company.com" /></div>
+            <div class="field"><label>Password</label><input id="cfgPass" type="password" placeholder="••••••••" /></div>
+            <div style="display:flex; align-items:center; justify-content:flex-end; gap:12px;">
+              <span class="saved-tag" id="savedCreds">Saved ✓</span>
+              <button class="save" id="saveCreds">Save credentials</button>
+            </div>
           </div>
         </div>
 
@@ -431,6 +461,10 @@ function hideOtp(){ $("#otp").classList.remove("show"); }
 $("#otpSubmit").addEventListener("click", async () => { const v=$("#otpInput").value.trim(); if(v){ await api.submitOtp(v); hideOtp(); } });
 $("#otpInput").addEventListener("keydown", e => { if(e.key==="Enter") $("#otpSubmit").click(); });
 
+/* ── window controls (native frameless window) ──────────────────────────── */
+function winClose(){ if (window.pywebview && window.pywebview.api.win_close) window.pywebview.api.win_close(); else window.close(); }
+function winMinimize(){ if (window.pywebview && window.pywebview.api.win_minimize) window.pywebview.api.win_minimize(); }
+
 /* ── helpers ────────────────────────────────────────────────────────────── */
 function $(s){ return document.querySelector(s); }
 function todayAt(h,m){ const d=new Date(); d.setHours(h,m,0,0); return d; }
@@ -457,10 +491,28 @@ function mockRefresh(){ return { ok:true, message:"Session refreshed — device 
 
 /* ── boot ───────────────────────────────────────────────────────────────── */
 /* ── settings sheet ── */
-function openSettings(){
-  $("#cfgUrl").value   = (STATE && STATE.config && STATE.config.url)   || "https://your-company.keka.com";
-  $("#cfgEmail").value = (STATE && STATE.config && STATE.config.email) || "";
+function accountView(){
+  const cfg = (STATE && STATE.config) || {};
+  if (cfg.configured){ showConfigured(cfg); } else { showEdit(cfg); }
+}
+function showConfigured(cfg){
+  $("#acctUrl").textContent   = cfg.url   || "—";
+  $("#acctEmail").textContent = cfg.email || "—";
+  $("#acctConfigured").style.display = "block";
+  $("#acctEdit").style.display = "none";
+}
+function showEdit(cfg){
+  cfg = cfg || (STATE && STATE.config) || {};
+  $("#cfgUrl").value   = cfg.url   || "";
+  $("#cfgEmail").value = cfg.email || "";
   $("#cfgPass").value  = "";
+  // If already configured, blank password = keep existing
+  $("#cfgPass").placeholder = cfg.configured ? "leave blank to keep current" : "••••••••";
+  $("#acctConfigured").style.display = "none";
+  $("#acctEdit").style.display = "block";
+}
+function openSettings(){
+  accountView();
   $("#cfgIn").value    = (STATE && STATE.scheduleIn)  || "09:00";
   $("#cfgOut").value   = (STATE && STATE.scheduleOut) || "18:00";
   $("#settings").classList.add("show");
@@ -472,12 +524,20 @@ const validTime = s => /^([01]?\d|2[0-3]):[0-5]\d$/.test((s||"").trim());
 $("#gear").addEventListener("click", openSettings);
 $("#settingsClose").addEventListener("click", closeSettings);
 $("#settings").addEventListener("click", e => { if (e.target.id==="settings") closeSettings(); });
+$("#acctUpdate").addEventListener("click", () => showEdit());
 
 $("#saveCreds").addEventListener("click", async () => {
   const creds = { url:$("#cfgUrl").value.trim(), email:$("#cfgEmail").value.trim(), password:$("#cfgPass").value };
+  if (!creds.email && !(STATE && STATE.config && STATE.config.configured)) { alert("Enter your email and password first."); return; }
   if (hasBridge()) await window.pywebview.api.save_creds(creds);
   flashTag("#savedCreds");
   pushActivity({ time: hm(), msg: "Credentials saved", kind: "info" });
+  // update local state + flip back to the compact configured view
+  if (STATE){ STATE.config = Object.assign({}, STATE.config, {
+    url: creds.url || (STATE.config&&STATE.config.url) || "",
+    email: creds.email || (STATE.config&&STATE.config.email) || "",
+    configured: true }); }
+  showConfigured((STATE && STATE.config) || creds);
 });
 $("#saveSched").addEventListener("click", async () => {
   const inT=$("#cfgIn").value.trim(), outT=$("#cfgOut").value.trim();

@@ -85,6 +85,17 @@ Prefer buttons over a terminal? There's a **native "liquid glass" dashboard**:
 .venv/bin/python keka_ui.py        # Windows: .venv\Scripts\python keka_ui.py
 ```
 
+**Make it a real app (name + icon), per OS** — so it shows as "Auto-Keka" with a
+clock icon instead of "python". Run the packager for your platform once:
+```bash
+bash packaging/build_macos_app.sh                              # 🍎 → Auto-Keka.app (Dock / Applications)
+bash packaging/build_linux_app.sh                              # 🐧 → app-menu entry (.desktop + icon)
+powershell -ExecutionPolicy Bypass -File packaging\build_windows_app.ps1   # 🪟 → Desktop + Start-Menu shortcuts (.ico)
+```
+All three share one icon generator (`packaging/make_icon.py`). The app itself
+runs everywhere regardless (native window, or browser fallback on Linux without
+WebKitGTK).
+
 A real desktop window opens showing:
 - ⏱️ **"Am I clocked in?"** hero with a live worked-time timer + workday progress
 - ⏭️ **Next scheduled** punch countdown and **device-pass** (14-day) health

@@ -82,7 +82,10 @@ jobs:
         shell: pwsh
         run: |
           Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
-          $r = Invoke-ScriptAnalyzer -Path setup.ps1, scheduling/install_windows.ps1 -Severity Error,Warning
+          $r = @()
+          foreach ($f in 'setup.ps1','scheduling/install_windows.ps1') {
+            $r += Invoke-ScriptAnalyzer -Path $f -Severity Error,Warning
+          }
           $r | Format-Table -AutoSize
           if ($r | Where-Object { $_.Severity -eq 'Error' }) { throw "PSScriptAnalyzer reported errors" }
 

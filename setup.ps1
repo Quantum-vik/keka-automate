@@ -104,31 +104,29 @@ Ok "Chromium ready"
 
 # ── 5. tesseract OCR engine ────────────────────────────────────────────────────
 Step "5. Checking tesseract (captcha reader)"
-if (Get-Command tesseract -ErrorAction SilentlyContinue) {
-    $tessVer = (& tesseract --version 2>&1) | Select-Object -First 1
-    Ok "already installed: $tessVer"
+$TessPath = Join-Path $env:ProgramFiles 'Tesseract-OCR\tesseract.exe'
+# Detect via PATH *or* the standard install dir (freshly installed tesseract is
+# often not on PATH yet). keka_common.py probes the same path at runtime.
+if ((Get-Command tesseract -ErrorAction SilentlyContinue) -or (Test-Path $TessPath)) {
+    Ok "tesseract present"
 } else {
-    Warn "tesseract not found on PATH — attempting install via winget"
-    $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
-    if ($wingetCmd) {
+    Warn "tesseract not found — attempting install via winget"
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
         try {
-            winget install -e --id UB-Mannheim.TesseractOCR
-            if ($LASTEXITCODE -eq 0) {
-                Ok "tesseract installed via winget"
-            } else {
-                Warn "winget install returned a non-zero exit code."
-                Warn "Download tesseract manually: https://github.com/UB-Mannheim/tesseract"
-            }
+            # These flags keep winget non-interactive (it otherwise prompts for
+            # source agreements and fails in scripted/CI shells).
+            winget install -e --id UB-Mannheim.TesseractOCR `
+                --accept-source-agreements --accept-package-agreements --disable-interactivity
+            if ($LASTEXITCODE -eq 0) { Ok "tesseract installed via winget" }
+            else { Warn "winget exit $LASTEXITCODE — install manually: https://github.com/UB-Mannheim/tesseract" }
         } catch {
-            Warn "winget install failed: $_"
-            Warn "Download tesseract manually: https://github.com/UB-Mannheim/tesseract"
+            Warn "winget failed: $_"
+            Warn "Install manually: https://github.com/UB-Mannheim/tesseract"
         }
     } else {
-        Warn "winget is not available on this machine."
-        Warn "Download tesseract manually: https://github.com/UB-Mannheim/tesseract"
+        Warn "winget unavailable — install manually: https://github.com/UB-Mannheim/tesseract"
     }
-    Warn "NOTE: tesseract may not be on PATH until you open a NEW PowerShell window."
-    Warn "      The automation also probes 'C:\Program Files\Tesseract-OCR\tesseract.exe' automatically."
+    Warn "NOTE: tesseract may not be on PATH until a NEW shell; the app also probes '$TessPath'."
 }
 
 # ── 6. Credentials (.env) ─────────────────────────────────────────────────────

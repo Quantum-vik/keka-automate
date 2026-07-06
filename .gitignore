@@ -5,3 +5,7 @@ logs/
 .venv/
 __pycache__/
 *.pyc
+
+# design handoff artifacts
+Better UI designs.zip
+*.zip

@@ -19,6 +19,18 @@ if (-not (Test-Path $Py)) {
     exit 1
 }
 
+# Clock times from .env (KEKA_IN_TIME / KEKA_OUT_TIME, "HH:MM"), default 09:00/18:00.
+function Get-EnvTime($key, $default) {
+    $envFile = Join-Path $Keka '.env'
+    if (Test-Path $envFile) {
+        $line = Select-String -Path $envFile -Pattern "^$key=(.+)$" | Select-Object -First 1
+        if ($line) { return $line.Matches[0].Groups[1].Value.Trim() }
+    }
+    return $default
+}
+$InTime  = Get-EnvTime 'KEKA_IN_TIME'  '09:00'
+$OutTime = Get-EnvTime 'KEKA_OUT_TIME' '18:00'
+
 $Weekdays  = @("Monday","Tuesday","Wednesday","Thursday","Friday")
 $Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
 
@@ -27,8 +39,8 @@ $ActIn  = New-ScheduledTaskAction -Execute $Py -Argument "`"$Keka\keka_punch_in.
 $ActOut = New-ScheduledTaskAction -Execute $Py -Argument "`"$Keka\keka_punch_out.py`""
 $ActChk = New-ScheduledTaskAction -Execute $Py -Argument "`"$Keka\keka_check.py`""
 
-$TrigIn  = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $Weekdays -At "09:00"
-$TrigOut = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $Weekdays -At "18:00"
+$TrigIn  = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $Weekdays -At $InTime
+$TrigOut = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $Weekdays -At $OutTime
 $TrigChk = New-ScheduledTaskTrigger -Daily  -At "10:00"
 $TrigLgn = New-ScheduledTaskTrigger -AtLogOn
 

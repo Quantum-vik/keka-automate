@@ -2,6 +2,10 @@
 
 > Your robot coworker who never forgets to clock in. ☕
 
+[![CI](https://github.com/Quantum-vik/keka-automate/actions/workflows/ci.yml/badge.svg)](https://github.com/Quantum-vik/keka-automate/actions/workflows/ci.yml)
+![Platforms](https://img.shields.io/badge/tested-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-blue)
+![Python](https://img.shields.io/badge/python-3.9%2B-blue)
+
 Ever sprinted to your laptop at 9:01 AM just to hit **Web Clock-In**? Or gotten
 home and realized you never clocked out? Yeah. This fixes that.
 
@@ -9,6 +13,9 @@ home and realized you never clocked out? Yeah. This fixes that.
 punches you **in at 9 AM** and **out at 6 PM**, Monday to Friday — automatically,
 in the background, on **macOS, Linux, and Windows**. It even solves the login
 captcha itself. 🤖
+
+> ✅ Every push is tested on real **macOS, Linux, and Windows** runners via GitHub
+> Actions — installer, OCR, and the scheduling scripts all verified per-OS.
 
 ---
 
@@ -67,6 +74,33 @@ There are 5 small scripts. Think of them as a little crew:
 
 That's it. Clock-in is a single click; clock-out is a two-click confirm; and if
 you're already clocked in/out, it just shrugs and exits (no double-punching). 🙌
+
+---
+
+## 🖥️ Desktop app
+
+Prefer buttons over a terminal? There's a **native "liquid glass" dashboard**:
+
+```bash
+.venv/bin/python keka_ui.py        # Windows: .venv\Scripts\python keka_ui.py
+```
+
+A real desktop window opens showing:
+- ⏱️ **"Am I clocked in?"** hero with a live worked-time timer + workday progress
+- ⏭️ **Next scheduled** punch countdown and **device-pass** (14-day) health
+- 🗓️ **This week** clock-in/out strip and a live **activity** feed
+- ☀️🌙 **Clock in / out** buttons and 🔑 **Refresh session**
+- 🔐 A **Settings** sheet (gear icon) for Keka URL / email / password and
+  clock-in / clock-out times
+- When Keka needs the 2FA code, an **OTP box appears right in the app** — read
+  the code from your email, type it in; login finishes headlessly (no browser popup).
+
+**How it renders (cross-platform):** a native window via
+[pywebview](https://pywebview.flowlib.org/) — macOS **WebKit**, Windows
+**WebView2**, Linux **WebKitGTK**. If a machine has no webview backend, it
+automatically **falls back to opening the same dashboard in your default
+browser**, so it works everywhere. Every action is recorded in
+`logs/history.jsonl` so you can see previous sessions.
 
 ---
 
@@ -193,6 +227,7 @@ schtasks /Delete /F /TN Keka\PunchIn                # remove (also PunchOut, Rea
 
 ```
 setup.sh / setup.ps1   🚀  one-command installer (macOS/Linux · Windows)
+keka_ui.py             🖥️  desktop control panel (Tkinter) with in-app OTP box
 keka_setup.py          🪪  one-time login + OTP → saves session
 keka_punch_in.py       ☀️  clock in
 keka_punch_out.py      🌙  clock out
@@ -200,9 +235,28 @@ keka_check.py          🐕  reauth watchdog
 keka_common.py         🧠  shared logic (login, captcha OCR, session, clicking)
 requirements.txt       📦  Python dependencies
 scheduling/            ⏰  install_macos.sh · install_linux.sh · install_windows.ps1
+.github/workflows/     🧪  CI — tests installers + OCR on macOS/Linux/Windows
 .env                   🔐  your secrets (git-ignored)
 session.json           🍪  saved login (git-ignored)
 logs/                  📄  run logs (git-ignored)
+```
+
+---
+
+## 🧪 Testing
+
+CI (`.github/workflows/ci.yml`) runs on every push across **three real OSes**:
+
+- **installer** (ubuntu · macOS · windows) — runs the actual `setup.sh` / `setup.ps1`,
+  then a smoke test: module import, real tesseract **OCR**, BOM-safe `.env` parsing.
+- **shell-lint** — `shellcheck` + `bash -n` on the Unix installers.
+- **powershell** (windows) — parse-check, PSScriptAnalyzer, and a live
+  `Register-ScheduledTask` cmdlet check (paths-with-spaces safe).
+
+Run the Python checks locally:
+```bash
+.venv/bin/python -m py_compile *.py
+.venv/bin/python .github/scripts/smoke.py
 ```
 
 ---

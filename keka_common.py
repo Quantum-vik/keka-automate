@@ -17,6 +17,8 @@ Design (works around Keka's captcha + 2FA):
 import os
 import sys
 import glob
+import json
+import time
 import shutil
 import base64
 import logging
@@ -84,15 +86,45 @@ def _load_env():
     return values
 
 
+def _apply_env(values):
+    """Set the module-level config from a parsed .env dict + real env vars."""
+    global BASE_URL, TENANT_HOST, ATTENDANCE_URL, EMAIL, PASSWORD, IN_TIME, OUT_TIME
+    BASE_URL = os.environ.get("KEKA_BASE_URL") or values.get("KEKA_BASE_URL", "https://<company-name>.keka.com")
+    TENANT_HOST = BASE_URL.split("://")[-1].split("/")[0]
+    ATTENDANCE_URL = f"{BASE_URL}/#/me/attendance/logs"
+    EMAIL = os.environ.get("KEKA_EMAIL") or values.get("KEKA_EMAIL", "")
+    PASSWORD = os.environ.get("KEKA_PASSWORD") or values.get("KEKA_PASSWORD", "")
+    IN_TIME = values.get("KEKA_IN_TIME", "09:00")
+    OUT_TIME = values.get("KEKA_OUT_TIME", "18:00")
+
+
 _env = _load_env()
+_apply_env(_env)
 
-# Your Keka tenant URL. Set KEKA_BASE_URL in .env (e.g. https://acme.keka.com).
-BASE_URL       = os.environ.get("KEKA_BASE_URL") or _env.get("KEKA_BASE_URL", "https://<company-name>.keka.com")
-TENANT_HOST    = BASE_URL.split("://")[-1].split("/")[0]   # e.g. acme.keka.com
-ATTENDANCE_URL = f"{BASE_URL}/#/me/attendance/logs"
 
-EMAIL    = os.environ.get("KEKA_EMAIL")    or _env.get("KEKA_EMAIL", "")
-PASSWORD = os.environ.get("KEKA_PASSWORD") or _env.get("KEKA_PASSWORD", "")
+def reload_config():
+    """Re-read .env into the module globals (call after the GUI edits it)."""
+    global _env
+    _env = _load_env()
+    _apply_env(_env)
+
+
+def update_env(updates):
+    """Merge {KEY: value} into .env (create if missing), keep other keys, 0600."""
+    current = _load_env()
+    for k, v in updates.items():
+        if v is not None:
+            current[str(k)] = str(v)
+    env_path = os.path.join(SCRIPT_DIR, ".env")
+    lines = ["# Keka credentials + settings. Private — keep chmod 600."]
+    lines += [f"{k}={v}" for k, v in current.items()]
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    try:
+        os.chmod(env_path, 0o600)
+    except OSError:
+        pass
+    reload_config()
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -215,6 +247,179 @@ def save_session(ctx):
         os.chmod(SESSION_FILE, 0o600)   # no-op-ish on Windows, harmless
     except OSError:
         pass
+
+
+# ── UI-driven headless login (email OTP entered in the app, no browser popup) ──
+def request_email_otp(page, log):
+    """On the 2FA 'SendCode' page, ask Keka to email the OTP. No-op if we're
+    already on the code-entry page."""
+    if "SendCode" not in page.url:
+        return True
+    for sel in ('button:has-text("Send code to email")',
+                'a:has-text("Send code to email")',
+                'button:has-text("email")', 'a:has-text("email")'):
+        loc = page.locator(sel)
+        if loc.count() and loc.first.is_visible():
+            loc.first.click()
+            page.wait_for_timeout(2500)
+            log.info("Requested OTP to email")
+            return True
+    log.warning("'Send code to email' button not found")
+    return False
+
+
+def submit_otp(page, log, otp):
+    """Fill the emailed OTP and submit. Returns True if login completes."""
+    otp = "".join(str(otp).split())
+    filled = False
+    for sel in ('input[name="Code"]', 'input#Code', 'input[name*="code" i]',
+                'input[id*="code" i]', 'input[placeholder*="code" i]',
+                'input[type="tel"]', 'input[type="number"]',
+                'input[type="text"]:not([type="hidden"])'):
+        loc = page.locator(sel)
+        if loc.count() and loc.first.is_visible():
+            loc.first.fill(otp)
+            filled = True
+            log.info("OTP entered")
+            break
+    if not filled:
+        log.error("OTP input field not found")
+        return False
+    clicked = False
+    for sel in ('button:has-text("Login")', 'button:has-text("Verify")',
+                'button:has-text("Submit")', 'button:has-text("Confirm")',
+                'button:has-text("Sign in")', 'button:has-text("Continue")',
+                'button[type="submit"]'):
+        loc = page.locator(sel)
+        if loc.count() and loc.first.is_visible():
+            loc.first.click()
+            clicked = True
+            break
+    if not clicked:
+        page.keyboard.press("Enter")   # single-field form — Enter submits it
+    page.wait_for_timeout(3500)
+    return is_logged_in(page)
+
+
+def interactive_login(otp_getter, log, headless=True):
+    """
+    Full login used by the GUI. Reuses the saved session if still valid;
+    otherwise does password + OCR captcha, requests the email OTP, and calls
+    otp_getter() (which blocks until the user types the code in the UI).
+
+    otp_getter(retry=False) -> str|None   (None cancels)
+    Returns True on success, False otherwise. Runs headless (no browser popup).
+    """
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=headless)
+        state = SESSION_FILE if os.path.exists(SESSION_FILE) else None
+        ctx = browser.new_context(storage_state=state)
+        page = ctx.new_page()
+        try:
+            # 1) reuse existing session if it still works
+            page.goto(ATTENDANCE_URL, wait_until="domcontentloaded", timeout=30_000)
+            page.wait_for_timeout(4000)
+            if is_logged_in(page):
+                save_session(ctx)
+                log.info("Existing session still valid")
+                return True
+
+            # 2) password + captcha
+            url = submit_credentials(page, log)
+            if not url:
+                return False
+
+            # 3) OTP, if the tenant asks for it (it does)
+            if "SendCode" in url or "VerifyCode" in url:
+                request_email_otp(page, log)
+                ok, tries = False, 0
+                while not ok and tries < 3:
+                    otp = otp_getter(retry=(tries > 0))
+                    if not otp:
+                        log.info("Login cancelled by user")
+                        return False
+                    ok = submit_otp(page, log, otp)
+                    tries += 1
+                if not ok:
+                    log.error("OTP not accepted after %d tries", tries)
+                    return False
+
+            # 4) warm up attendance origin + save
+            try:
+                page.goto(ATTENDANCE_URL, wait_until="domcontentloaded", timeout=30_000)
+                page.wait_for_timeout(4000)
+            except Exception:
+                pass
+            save_session(ctx)
+            log.info("Login complete — session saved")
+            return True
+        finally:
+            browser.close()
+
+
+# ── Session history log (for the UI activity feed / "previous session info") ──
+HISTORY_FILE = log_path("history.jsonl")
+
+
+def log_history(kind, msg):
+    """Append one activity/session event to logs/history.jsonl.
+    kind: 'in' | 'out' | 'info'. Used by the punch scripts and the UI so you
+    can always see previous clock-ins/outs and refreshes."""
+    entry = {
+        "ts": int(time.time() * 1000),
+        "time": datetime.now().strftime("%H:%M"),
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "kind": kind,
+        "msg": msg,
+    }
+    try:
+        with open(HISTORY_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+        os.chmod(HISTORY_FILE, 0o600)
+    except OSError:
+        pass
+    return entry
+
+
+def read_history(n=200):
+    """Return the last n history entries (oldest→newest)."""
+    if not os.path.exists(HISTORY_FILE):
+        return []
+    out = []
+    try:
+        with open(HISTORY_FILE, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        out.append(json.loads(line))
+                    except ValueError:
+                        pass
+    except OSError:
+        return []
+    return out[-n:]
+
+
+def get_status():
+    """Headless: is the user clocked 'in', 'out', or None (unknown/logged out)?"""
+    if not os.path.exists(SESSION_FILE):
+        return None
+    with sync_playwright() as p:
+        b = p.chromium.launch(headless=True)
+        ctx = b.new_context(storage_state=SESSION_FILE)
+        page = ctx.new_page()
+        try:
+            page.goto(ATTENDANCE_URL, wait_until="domcontentloaded", timeout=30_000)
+            page.wait_for_timeout(5000)
+            if not is_logged_in(page):
+                return None
+            if page.locator('text="Web Clock-out"').count() > 0:
+                return "in"
+            if page.locator('text="Web Clock-In"').count() > 0:
+                return "out"
+            return None
+        finally:
+            b.close()
 
 
 # ── Punch action ──────────────────────────────────────────────────────────────
@@ -363,11 +568,13 @@ def run_punch(action, log_file):
         already_out = page.locator('text="Web Clock-In"').count() > 0
         if action == "in" and already_in:
             log.info("Already clocked IN — nothing to do")
+            log_history("in", "Already clocked in — no double-punch")
             browser.close()
             cleanup_pngs(log)
             return
         if action == "out" and already_out:
             log.info("Already clocked OUT — nothing to do")
+            log_history("out", "Already clocked out — no double-punch")
             browser.close()
             cleanup_pngs(log)
             return
@@ -391,6 +598,7 @@ def run_punch(action, log_file):
         page.screenshot(path=shot)
         log.info("Screenshot: %s", shot)
         log.info("=== Punch-%s complete ===", label)
+        log_history(action, f"Clocked {'in' if action == 'in' else 'out'}")
         browser.close()
 
     cleanup_pngs(log)

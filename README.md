@@ -2,6 +2,10 @@
 
 > Your robot coworker who never forgets to clock in. ☕
 
+[![CI](https://github.com/Quantum-vik/keka-automate/actions/workflows/ci.yml/badge.svg)](https://github.com/Quantum-vik/keka-automate/actions/workflows/ci.yml)
+![Platforms](https://img.shields.io/badge/tested-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-blue)
+![Python](https://img.shields.io/badge/python-3.9%2B-blue)
+
 Ever sprinted to your laptop at 9:01 AM just to hit **Web Clock-In**? Or gotten
 home and realized you never clocked out? Yeah. This fixes that.
 
@@ -9,6 +13,9 @@ home and realized you never clocked out? Yeah. This fixes that.
 punches you **in at 9 AM** and **out at 6 PM**, Monday to Friday — automatically,
 in the background, on **macOS, Linux, and Windows**. It even solves the login
 captcha itself. 🤖
+
+> ✅ Every push is tested on real **macOS, Linux, and Windows** runners via GitHub
+> Actions — installer, OCR, and the scheduling scripts all verified per-OS.
 
 ---
 
@@ -200,9 +207,28 @@ keka_check.py          🐕  reauth watchdog
 keka_common.py         🧠  shared logic (login, captcha OCR, session, clicking)
 requirements.txt       📦  Python dependencies
 scheduling/            ⏰  install_macos.sh · install_linux.sh · install_windows.ps1
+.github/workflows/     🧪  CI — tests installers + OCR on macOS/Linux/Windows
 .env                   🔐  your secrets (git-ignored)
 session.json           🍪  saved login (git-ignored)
 logs/                  📄  run logs (git-ignored)
+```
+
+---
+
+## 🧪 Testing
+
+CI (`.github/workflows/ci.yml`) runs on every push across **three real OSes**:
+
+- **installer** (ubuntu · macOS · windows) — runs the actual `setup.sh` / `setup.ps1`,
+  then a smoke test: module import, real tesseract **OCR**, BOM-safe `.env` parsing.
+- **shell-lint** — `shellcheck` + `bash -n` on the Unix installers.
+- **powershell** (windows) — parse-check, PSScriptAnalyzer, and a live
+  `Register-ScheduledTask` cmdlet check (paths-with-spaces safe).
+
+Run the Python checks locally:
+```bash
+.venv/bin/python -m py_compile *.py
+.venv/bin/python .github/scripts/smoke.py
 ```
 
 ---

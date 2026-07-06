@@ -376,9 +376,11 @@ function render() {
   if (!STATE) return;
   const now = vnow();
   const clockedIn = STATE.clockedIn;
-  const cIn  = STATE.clockInAt  || todayAt(9,2).getTime();
-  const cOut = todayAt(18,0).getTime();
-  const startIn = todayAt(9,0).getTime();
+  const sIn  = STATE.scheduleIn  || "09:00";
+  const sOut = STATE.scheduleOut || "18:00";
+  const startIn = schedAt(sIn);
+  const cOut    = schedAt(sOut);
+  const cIn  = STATE.clockInAt || startIn;
 
   // hero
   $("#statusDot").style.background = clockedIn ? "var(--present)" : "var(--out)";
@@ -390,13 +392,18 @@ function render() {
     ? `Clocked in at ${fmtHM(new Date(cIn))} · by automation`
     : `Clocked out at ${fmtHM(new Date(STATE.clockOutAt||cOut))} · ${fmtDur((STATE.clockOutAt||cOut)-cIn)} total`;
   $("#workBar").style.width = (clockedIn ? clamp((now-startIn)/(cOut-startIn)*100,0,100) : 100).toFixed(1) + "%";
+  $("#inLabel").textContent  = fmtSched(sIn);
+  $("#outLabel").textContent = fmtSched(sOut);
 
-  // next scheduled
+  // next scheduled — uses your saved times
   const nextIsOut = clockedIn;
-  const target = nextIsOut ? cOut : nextMorning(cIn);
+  const inTomorrow = now > startIn ? 1 : 0;
+  const target = nextIsOut ? cOut : schedAt(sIn, inTomorrow);
   $("#nextDot").style.background = nextIsOut ? "var(--out)" : "var(--present)";
   $("#nextLabel").textContent = nextIsOut ? "Auto clock-out" : "Auto clock-in";
-  $("#nextTime").textContent  = nextIsOut ? "Today · 6:00 PM" : "Tomorrow · 9:00 AM";
+  $("#nextTime").textContent  = nextIsOut
+    ? `Today · ${fmtSched(sOut)}`
+    : `${inTomorrow ? "Tomorrow" : "Today"} · ${fmtSched(sIn)}`;
   $("#countdown").textContent = fmtCountdown(target - now);
 
   // session
@@ -468,6 +475,8 @@ function winMinimize(){ if (window.pywebview && window.pywebview.api.win_minimiz
 /* ── helpers ────────────────────────────────────────────────────────────── */
 function $(s){ return document.querySelector(s); }
 function todayAt(h,m){ const d=new Date(); d.setHours(h,m,0,0); return d; }
+function schedAt(hhmm, off){ const [h,m]=(hhmm||"09:00").split(":").map(Number); const d=new Date(); d.setHours(h||0,m||0,0,0); if(off) d.setDate(d.getDate()+off); return d.getTime(); }
+function fmtSched(hhmm){ const [h,m]=(hhmm||"09:00").split(":").map(Number); const d=new Date(); d.setHours(h||0,m||0,0,0); return fmtHM(d); }
 function pad(n){ return String(n).padStart(2,"0"); }
 function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
 function fmtHM(d){ let h=d.getHours(); const m=d.getMinutes(); const ap=h>=12?"PM":"AM"; h%=12; if(!h)h=12; return `${h}:${pad(m)} ${ap}`; }
@@ -544,6 +553,7 @@ $("#saveSched").addEventListener("click", async () => {
   if (!validTime(inT) || !validTime(outT)) { alert("Use 24-hour HH:MM, e.g. 09:00 and 18:00."); return; }
   if (hasBridge()) await window.pywebview.api.apply_schedule({ inTime:inT, outTime:outT });
   if (STATE){ STATE.scheduleIn=inT; STATE.scheduleOut=outT; }
+  render();
   flashTag("#savedSched");
   pushActivity({ time: hm(), msg: `Schedule set · in ${inT}, out ${outT}`, kind: "info" });
 });

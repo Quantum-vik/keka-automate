@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # ── Full installer + Python smoke on all three OSes ──────────────────────────
+  installer:
+    name: installer (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Seed a dummy .env (so the installer runs non-interactively)
+        shell: bash
+        run: printf 'KEKA_BASE_URL=https://example.keka.com\nKEKA_EMAIL=t@e.com\nKEKA_PASSWORD=dummy\n' > .env
+
+      # Windows: winget can't run headless in CI, so pre-install tesseract via
+      # choco. This also exercises keka_common's "C:\Program Files" probe.
+      - name: Install tesseract (Windows)
+        if: runner.os == 'Windows'
+        run: choco install tesseract --no-progress -y
+
+      - name: Run installer — Unix (setup.sh)
+        if: runner.os != 'Windows'
+        run: ./setup.sh --no-login --no-schedule
+
+      - name: Run installer — Windows (setup.ps1)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./setup.ps1 -NoLogin -NoSchedule
+
+      - name: Smoke test — Unix
+        if: runner.os != 'Windows'
+        run: ./.venv/bin/python .github/scripts/smoke.py
+
+      - name: Smoke test — Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\.venv\Scripts\python.exe .github\scripts\smoke.py
+
+  # ── Bash lint for the Unix installers ────────────────────────────────────────
+  shell-lint:
+    name: shell-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash -n (syntax)
+        run: for f in setup.sh scheduling/install_linux.sh scheduling/install_macos.sh; do bash -n "$f"; done
+      - name: shellcheck (errors fail the build)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y shellcheck
+          shellcheck -S error setup.sh scheduling/install_linux.sh scheduling/install_macos.sh
+
+  # ── Real Windows validation of the PowerShell scripts ────────────────────────
+  powershell:
+    name: powershell (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse-check the .ps1 files
+        shell: pwsh
+        run: |
+          foreach ($f in 'setup.ps1','scheduling/install_windows.ps1') {
+            $tokens = $null; $errs = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f).Path, [ref]$tokens, [ref]$errs)
+            if ($errs.Count) { $errs | ForEach-Object { $_.Message }; throw "Parse errors in $f" }
+            Write-Host "PARSE OK: $f"
+          }
+
+      - name: PSScriptAnalyzer (fail on errors)
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          $r = @()
+          foreach ($f in 'setup.ps1','scheduling/install_windows.ps1') {
+            $r += Invoke-ScriptAnalyzer -Path $f -Severity Error,Warning
+          }
+          $r | Format-Table -AutoSize
+          if ($r | Where-Object { $_.Severity -eq 'Error' }) { throw "PSScriptAnalyzer reported errors" }
+
+      - name: ScheduledTasks cmdlets accept our exact arguments
+        shell: pwsh
+        run: |
+          $t = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At "09:00"
+          $a = New-ScheduledTaskAction  -Execute "python.exe" -Argument '"C:\Program Files\keka\keka_punch_in.py"'
+          $p = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+          if ($t -and $a -and $p) { Write-Host "ScheduledTasks cmdlets OK (paths with spaces handled)" }
+          else { throw "ScheduledTasks cmdlet build failed" }
+
+      - name: setup.ps1 -Help runs
+        shell: pwsh
+        run: ./setup.ps1 -Help

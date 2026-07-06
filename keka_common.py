@@ -72,7 +72,9 @@ def _load_env():
     values = {}
     env_path = os.path.join(SCRIPT_DIR, ".env")
     if os.path.exists(env_path):
-        with open(env_path) as f:
+        # utf-8-sig transparently strips a UTF-8 BOM (Windows editors/PowerShell
+        # add one), which would otherwise corrupt the first key name.
+        with open(env_path, encoding="utf-8-sig") as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith("#") or "=" not in line:
@@ -98,7 +100,7 @@ def get_logger(log_file):
     # File handler always; console handler only for interactive runs. Under
     # launchd/cron, stdout is already redirected to the log file, so adding a
     # StreamHandler there would double every line.
-    handlers = [logging.FileHandler(log_file)]
+    handlers = [logging.FileHandler(log_file, encoding="utf-8")]
     if sys.stdout.isatty():
         handlers.append(logging.StreamHandler(sys.stdout))
     logging.basicConfig(
@@ -205,6 +207,16 @@ def is_logged_in(page):
     return TENANT_HOST in url and "app.keka.com" not in url and "Account" not in url
 
 
+def save_session(ctx):
+    """Persist the browser session, then lock the file to owner-only (0600).
+    session.json holds auth cookies, so it must not be world-readable."""
+    ctx.storage_state(path=SESSION_FILE)
+    try:
+        os.chmod(SESSION_FILE, 0o600)   # no-op-ish on Windows, harmless
+    except OSError:
+        pass
+
+
 # ── Punch action ──────────────────────────────────────────────────────────────
 def click_punch(page, log, action):
     """
@@ -296,7 +308,7 @@ def attempt_relogin(ctx, page, log):
         log.error("Auto-relogin did not reach the app")
         return False
 
-    ctx.storage_state(path=SESSION_FILE)
+    save_session(ctx)
     log.info("Auto-relogin succeeded — session re-saved")
     page.goto(ATTENDANCE_URL, wait_until="domcontentloaded", timeout=30_000)
     page.wait_for_timeout(5000)
@@ -371,7 +383,7 @@ def run_punch(action, log_file):
 
         # Re-save session so its expiry keeps rolling forward
         try:
-            ctx.storage_state(path=SESSION_FILE)
+            save_session(ctx)
         except Exception:
             pass
 

@@ -70,7 +70,26 @@ you're already clocked in/out, it just shrugs and exits (no double-punching). �
 
 ---
 
-## 🚀 Setup (any OS, ~5 minutes)
+## 🚀 Setup — one command
+
+Clone the repo, then run the installer for your OS. It does **everything**:
+Python venv, dependencies, Chromium, tesseract (+ desktop packages on Linux),
+your `.env`, the one-time OTP login, and the schedule. It's safe to re-run.
+
+```bash
+# 🍎 macOS  /  🐧 Linux
+./setup.sh
+
+# 🪟 Windows (in PowerShell)
+powershell -ExecutionPolicy Bypass -File setup.ps1
+```
+
+That's the whole install. It'll prompt for your Keka URL / email / password, then
+open a browser once for your OTP. Handy flags: `--no-login` / `--no-schedule`
+(bash) or `-NoLogin` / `-NoSchedule` (PowerShell).
+
+<details>
+<summary>Prefer to do it by hand? (manual steps)</summary>
 
 ```bash
 # 1) Python environment + libraries
@@ -78,10 +97,10 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt          # Windows: .venv\Scripts\pip
 .venv/bin/python -m playwright install chromium
 
-# 2) Install tesseract (the captcha reader)
+# 2) Install tesseract + desktop bits
 #    macOS:    brew install tesseract
-#    Linux:    sudo apt install tesseract-ocr
-#    Windows:  grab it from github.com/UB-Mannheim/tesseract  (auto-detected)
+#    Linux:    sudo apt install tesseract-ocr tesseract-ocr-eng python3-tk zenity libnotify-bin
+#    Windows:  winget install UB-Mannheim.TesseractOCR   (auto-detected)
 
 # 3) Add your details to a .env file (see below) and log in once
 .venv/bin/python keka_setup.py                     # a browser opens → type your OTP
@@ -91,6 +110,7 @@ bash scheduling/install_macos.sh                                         # 🍎 
 bash scheduling/install_linux.sh                                         # 🐧 Linux  (cron)
 powershell -ExecutionPolicy Bypass -File scheduling\install_windows.ps1  # 🪟 Windows (Task Scheduler)
 ```
+</details>
 
 ### 🔐 Your `.env` file
 Create a file named `.env` next to the scripts (it's **git-ignored — never
@@ -172,6 +192,7 @@ schtasks /Delete /F /TN Keka\PunchIn                # remove (also PunchOut, Rea
 ## 📁 What's in the box
 
 ```
+setup.sh / setup.ps1   🚀  one-command installer (macOS/Linux · Windows)
 keka_setup.py          🪪  one-time login + OTP → saves session
 keka_punch_in.py       ☀️  clock in
 keka_punch_out.py      🌙  clock out

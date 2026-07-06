@@ -2,32 +2,44 @@
 # Run in PowerShell (as your normal user):
 #   powershell -ExecutionPolicy Bypass -File scheduling\install_windows.ps1
 #
-# Creates 4 tasks under the "Keka" folder. Punch tasks are headless; the reauth
-# tasks are interactive (/IT) so the login browser + dialog can appear.
+# Creates 4 tasks under the "\Keka\" folder using the ScheduledTasks cmdlets
+# (Execute + Argument are passed separately, so paths with spaces are safe).
+# Punch tasks are headless; the reauth tasks are Interactive so the login
+# browser + dialog can appear.
+$ErrorActionPreference = 'Stop'
 
 $Keka = Split-Path -Parent $PSScriptRoot
 $Py   = Join-Path $Keka ".venv\Scripts\python.exe"
 
 if (-not (Test-Path $Py)) {
-    Write-Host "ERROR: $Py not found. Create the venv first:" -ForegroundColor Red
+    Write-Host "ERROR: $Py not found. Run setup.ps1 first (or create the venv):" -ForegroundColor Red
     Write-Host "  python -m venv `"$Keka\.venv`""
     Write-Host "  `"$Py`" -m pip install -r `"$Keka\requirements.txt`""
     Write-Host "  `"$Py`" -m playwright install chromium"
     exit 1
 }
 
-$In  = "`"$Py`" `"$Keka\keka_punch_in.py`""
-$Out = "`"$Py`" `"$Keka\keka_punch_out.py`""
-$Chk = "`"$Py`" `"$Keka\keka_check.py`""
+$Weekdays  = @("Monday","Tuesday","Wednesday","Thursday","Friday")
+$Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
 
-# Punch in — weekdays 09:00
-schtasks /Create /F /TN "Keka\PunchIn"  /TR $In  /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 09:00
-# Punch out — weekdays 18:00
-schtasks /Create /F /TN "Keka\PunchOut" /TR $Out /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 18:00
-# Reauth watchdog — daily 10:00 (interactive) + at logon
-schtasks /Create /F /TN "Keka\Reauth"      /TR $Chk /SC DAILY /ST 10:00 /IT
-schtasks /Create /F /TN "Keka\ReauthLogon" /TR $Chk /SC ONLOGON /IT
+# Arguments are quoted individually; Register-ScheduledTask handles the rest.
+$ActIn  = New-ScheduledTaskAction -Execute $Py -Argument "`"$Keka\keka_punch_in.py`""
+$ActOut = New-ScheduledTaskAction -Execute $Py -Argument "`"$Keka\keka_punch_out.py`""
+$ActChk = New-ScheduledTaskAction -Execute $Py -Argument "`"$Keka\keka_check.py`""
 
-Write-Host "Installed Keka tasks. View with:  schtasks /Query /FO LIST /TN Keka\PunchIn" -ForegroundColor Green
-Write-Host "Remove with: schtasks /Delete /F /TN Keka\PunchIn (and PunchOut, Reauth, ReauthLogon)"
-Write-Host "Logs in: $Keka\logs\"
+$TrigIn  = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $Weekdays -At "09:00"
+$TrigOut = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $Weekdays -At "18:00"
+$TrigChk = New-ScheduledTaskTrigger -Daily  -At "10:00"
+$TrigLgn = New-ScheduledTaskTrigger -AtLogOn
+
+Register-ScheduledTask -Force -TaskPath "\Keka\" -TaskName "PunchIn"     -Action $ActIn  -Trigger $TrigIn  -Principal $Principal | Out-Null
+Register-ScheduledTask -Force -TaskPath "\Keka\" -TaskName "PunchOut"    -Action $ActOut -Trigger $TrigOut -Principal $Principal | Out-Null
+Register-ScheduledTask -Force -TaskPath "\Keka\" -TaskName "Reauth"      -Action $ActChk -Trigger $TrigChk -Principal $Principal | Out-Null
+Register-ScheduledTask -Force -TaskPath "\Keka\" -TaskName "ReauthLogon" -Action $ActChk -Trigger $TrigLgn -Principal $Principal | Out-Null
+
+Write-Host "Installed Keka tasks (9 AM in / 6 PM out, Mon-Fri; reauth daily 10 AM + logon)." -ForegroundColor Green
+Write-Host "View:   Get-ScheduledTask -TaskPath '\Keka\'"
+Write-Host "Remove: Get-ScheduledTask -TaskPath '\Keka\' | Unregister-ScheduledTask -Confirm:`$false"
+Write-Host "Logs:   $Keka\logs\"
+Write-Host ""
+Write-Host "Note: tasks run only while you're logged in (no stored password, by design)."

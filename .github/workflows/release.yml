@@ -1,0 +1,44 @@
+name: Release
+
+# Cut a GitHub Release with the downloadable zip whenever a version tag is
+# pushed, e.g.:
+#
+#     git tag v1.1.0 && git push origin v1.1.0
+#
+# The zip is built with `git archive`, so it contains ONLY tracked files — never
+# .env, session.json, .venv or logs.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # needed to create the release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build clean release zip
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          git archive --format=zip --prefix=keka-automate/ \
+            -o "keka-automate-${VERSION}.zip" HEAD
+          echo "Built keka-automate-${VERSION}.zip"
+          # Fail loudly if anything sensitive ever sneaks into a tracked file.
+          if unzip -l "keka-automate-${VERSION}.zip" | grep -Eiq '\.env$|session\.json|\.venv/|/logs/'; then
+            echo "::error::Sensitive file found in the archive — aborting release."
+            exit 1
+          fi
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          gh release create "$VERSION" "keka-automate-${VERSION}.zip" \
+            --title "Auto-Keka $VERSION — download & run" \
+            --notes-file .github/release-notes.md

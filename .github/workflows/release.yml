@@ -1,12 +1,13 @@
 name: Release
 
-# Cut a GitHub Release with the downloadable zip whenever a version tag is
-# pushed, e.g.:
+# Build LOCKED, source-hidden binaries (Nuitka) for each OS and attach them to a
+# GitHub Release when a version tag is pushed:
 #
 #     git tag v1.1.0 && git push origin v1.1.0
 #
-# The zip is built with `git archive`, so it contains ONLY tracked files — never
-# .env, session.json, .venv or logs.
+# NOTE: this ships COMPILED binaries, never source. Playwright + Nuitka bundling
+# can need per-OS tweaks — validate with a test tag before relying on it. A failed
+# build simply produces no release (safe: nothing is leaked).
 
 on:
   push:
@@ -14,31 +15,69 @@ on:
       - 'v*'
 
 permissions:
-  contents: write   # needed to create the release
+  contents: write
 
 jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: Auto-Keka-macos
+          - os: windows-latest
+            name: Auto-Keka-windows
+          - os: ubuntu-latest
+            name: Auto-Keka-linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile with Nuitka
+        uses: Nuitka/Nuitka-Action@main
+        with:
+          nuitka-version: main
+          script-name: keka_ui.py
+          mode: onefile
+          include-data-dir: ui=ui
+          include-module: license
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          mkdir -p out
+          # Nuitka drops the binary in build/ — grab whatever it produced.
+          cp -R build/keka_ui* "out/${{ matrix.name }}" 2>/dev/null || \
+          cp -R build/*.app   "out/${{ matrix.name }}.app" 2>/dev/null || true
+          ( cd out && zip -r "${{ matrix.name }}.zip" . )
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: out/${{ matrix.name }}.zip
+
   release:
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Build clean release zip
-        run: |
-          VERSION="${GITHUB_REF_NAME}"
-          git archive --format=zip --prefix=keka-automate/ \
-            -o "keka-automate-${VERSION}.zip" HEAD
-          echo "Built keka-automate-${VERSION}.zip"
-          # Fail loudly if anything sensitive ever sneaks into a tracked file.
-          if unzip -l "keka-automate-${VERSION}.zip" | grep -Eiq '\.env$|session\.json|\.venv/|/logs/'; then
-            echo "::error::Sensitive file found in the archive — aborting release."
-            exit 1
-          fi
-
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
       - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${GITHUB_REF_NAME}"
-          gh release create "$VERSION" "keka-automate-${VERSION}.zip" \
-            --title "Auto-Keka $VERSION — download & run" \
-            --notes-file .github/release-notes.md
+          gh release create "${GITHUB_REF_NAME}" artifacts/*/*.zip \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Auto-Keka ${GITHUB_REF_NAME}" \
+            --notes-file .github/release-notes.md || \
+          gh release upload "${GITHUB_REF_NAME}" artifacts/*/*.zip --repo "${GITHUB_REPOSITORY}"

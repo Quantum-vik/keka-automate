@@ -27,6 +27,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import keka_common as kc
 import keka_check as kck
+import license as lic
 
 UI_HTML = os.path.join(kc.SCRIPT_DIR, "ui", "index.html")
 VENV_PY = sys.executable
@@ -93,7 +94,10 @@ class Backend:
         # so the first-run wizard never re-appears for them.
         onboarded = (env.get("KEKA_ONBOARDED", "") == "1"
                      or (configured and os.path.exists(kc.SESSION_FILE)))
+        linfo = lic.license_info()
         return {
+            "licensed": linfo is not None,
+            "licenseName": (linfo or {}).get("n", ""),
             "clockedIn": self._status == "in",
             "clockInAt": cin, "clockOutAt": cout,
             "scheduleIn": env.get("KEKA_IN_TIME", "09:00"),
@@ -135,6 +139,16 @@ class Backend:
                 self.push_log("Some components need a manual step — see the README "
                               "or run setup in a terminal.", "out")
             return {"ok": rc == 0 and ready, "ready": ready}
+
+    def activate_license(self, key):
+        """Validate + store a license key. Returns {ok, name|message}."""
+        info = lic.verify_key(key or "")
+        if info:
+            lic.save_license(key)
+            kc.log_history("info", "License activated")
+            self.push_state()
+            return {"ok": True, "name": info.get("n", "")}
+        return {"ok": False, "message": "Invalid or expired license key"}
 
     def finish_onboarding(self):
         """Mark first-run complete and register the app to open at login."""
@@ -315,6 +329,7 @@ class Api:
     def apply_schedule(self, obj): return self._b.apply_schedule(obj)
     def install_deps(self):     return self._b.install_deps()
     def finish_onboarding(self): return self._b.finish_onboarding()
+    def activate_license(self, key): return self._b.activate_license(key)
 
     # frameless-window controls (the design draws its own traffic lights)
     def win_close(self):
@@ -352,7 +367,8 @@ _SHIM = """
     clock_in:()=>post('/api/clock_in'), clock_out:()=>post('/api/clock_out'),
     refresh_session:()=>post('/api/refresh'), submit_otp:(c)=>post('/api/submit_otp',{code:c}),
     save_creds:(o)=>post('/api/save_creds',o), apply_schedule:(o)=>post('/api/apply_schedule',o),
-    install_deps:()=>post('/api/install_deps'), finish_onboarding:()=>post('/api/finish_onboarding')}};
+    install_deps:()=>post('/api/install_deps'), finish_onboarding:()=>post('/api/finish_onboarding'),
+    activate_license:(k)=>post('/api/activate_license',{key:k})}};
   try{const es=new EventSource('/events');es.onmessage=(e)=>{const m=JSON.parse(e.data),K=window.KekaUI||{};
     if(m.type==='log'&&K.onLog)K.onLog(m.entry);else if(m.type==='state'&&K.onState)K.onState(m.state);
     else if(m.type==='otp'&&K.onOtpRequired)K.onOtpRequired(m.retry);else if(m.type==='otpDone'&&K.onOtpDone)K.onOtpDone();};}catch(_){}
@@ -417,7 +433,8 @@ def run_browser():
                       "/api/save_creds": lambda: backend.save_creds(body),
                       "/api/apply_schedule": lambda: backend.apply_schedule(body),
                       "/api/install_deps": lambda: backend.install_deps(),
-                      "/api/finish_onboarding": lambda: backend.finish_onboarding()}
+                      "/api/finish_onboarding": lambda: backend.finish_onboarding(),
+                      "/api/activate_license": lambda: backend.activate_license(body.get("key"))}
             fn = routes.get(self.path)
             if not fn: self.send_error(404); return
             try: self._json(fn())

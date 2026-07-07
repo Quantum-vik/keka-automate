@@ -14,3 +14,7 @@ Auto-Keka.app/
 packaging/auto-keka.ico
 
 # Note: Auto-Keka.command / .sh / .bat are the tracked double-click launchers.
+
+# Licensing secrets — NEVER commit
+tools/license_private.pem
+license.key

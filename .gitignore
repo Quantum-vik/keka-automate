@@ -10,6 +10,7 @@ __pycache__/
 Better UI designs.zip
 *.zip
 Auto-Keka.app/
-Auto-Keka.command
 *.icns
 packaging/auto-keka.ico
+
+# Note: Auto-Keka.command / .sh / .bat are the tracked double-click launchers.

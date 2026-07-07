@@ -318,6 +318,35 @@ job (launchd / cron / Task Scheduler).
 
 ---
 
+## 💳 Licensing (seller notes)
+
+The app is gated by an **offline license key** (Ed25519-signed). `license.py`
+ships the **public** key only, so the app verifies keys with no server; the
+**private** key (`tools/license_private.pem`, git-ignored) only you hold.
+
+```bash
+# One-time: create your keypair + your first key, then paste the printed
+# PUBLIC KEY into license.py → PUBLIC_KEY_HEX.
+python tools/gen_license.py --name "Jane Doe" --email jane@acme.com
+python tools/gen_license.py --name "Trial" --days 14        # time-limited key
+```
+
+Ship a **compiled** binary (so the check can't be edited out of the source):
+```bash
+bash packaging/build_binary.sh          # Nuitka onefile for this OS → dist/
+```
+
+**Before selling, remember:**
+- 🔒 Make the **GitHub repo private** — a public repo already exposes the source,
+  binary or not.
+- 🗝️ **Back up `license_private.pem`.** Lose it and you can't verify sold keys;
+  leak it and anyone can mint free ones.
+- 🏪 Sell + deliver keys via a store (Gumroad / Lemon Squeezy / Paddle) — they
+  handle payment, tax, and key hand-off. Swap to their online key-validation API
+  later if you want activation limits.
+
+---
+
 ## 🧪 Testing
 
 CI (`.github/workflows/ci.yml`) runs on every push across **three real OSes**:

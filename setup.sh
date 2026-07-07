@@ -17,22 +17,41 @@ cd "$KEKA"
 # ── options ───────────────────────────────────────────────────────────────────
 DO_LOGIN_STEP=1
 DO_SCHEDULE_STEP=1
-for arg in "$@"; do
-    case "$arg" in
+PHASE="all"     # all | light | heavy  (the app installs 'light' then 'heavy')
+while [ $# -gt 0 ]; do
+    case "$1" in
         --no-login)    DO_LOGIN_STEP=0 ;;
         --no-schedule) DO_SCHEDULE_STEP=0 ;;
+        --phase)       PHASE="${2:-all}"; shift ;;
+        --phase=*)     PHASE="${1#*=}" ;;
         -h|--help)
             cat <<EOF
 Keka Automate setup (Linux/macOS). Usage: ./setup.sh [options]
   --no-login      Skip the interactive OTP login step
   --no-schedule   Skip installing the cron/launchd schedule
+  --phase P       Install only part of the deps: 'light' (venv + pip packages,
+                  enough to open the app) or 'heavy' (Chromium + tesseract).
+                  Default 'all' also does .env, login and schedule.
   -h, --help      Show this help
 Runs everything by default: venv, deps, Chromium, tesseract, .env, login, schedule.
 EOF
             exit 0 ;;
-        *) echo "Unknown option: $arg (try --help)"; exit 1 ;;
+        *) echo "Unknown option: $1 (try --help)"; exit 1 ;;
     esac
+    shift
 done
+
+case "$PHASE" in all|light|heavy) ;; *) echo "Bad --phase: $PHASE (use all|light|heavy)"; exit 1 ;; esac
+# want <group>  →  true if this run should do that group of steps.
+#   light = Python/venv/pip (+ native-window libs);  heavy = Chromium + tesseract;
+#   final = .env + login + schedule (only in the default 'all' phase).
+want() {
+    case "$1" in
+        light) [ "$PHASE" = all ] || [ "$PHASE" = light ] ;;
+        heavy) [ "$PHASE" = all ] || [ "$PHASE" = heavy ] ;;
+        final) [ "$PHASE" = all ] ;;
+    esac
+}
 
 # ── pretty output ─────────────────────────────────────────────────────────────
 b() { printf "\n\033[1;36m▶ %s\033[0m\n" "$*"; }      # step header
@@ -49,6 +68,10 @@ if [ "$OS" = "Linux" ]; then
     export DEBIAN_FRONTEND=noninteractive
 fi
 
+VENV_PY=".venv/bin/python"   # always defined (heavy phase needs it too)
+
+# ── 1-3. Light deps: Python + venv + pip packages ─────────────────────────────
+if want light; then
 # ── 1. Python ─────────────────────────────────────────────────────────────────
 b "Checking Python"
 PYBIN="$(command -v python3 || true)"
@@ -63,14 +86,15 @@ if [ ! -x ".venv/bin/python" ]; then
 else
     ok ".venv already exists"
 fi
-VENV_PY=".venv/bin/python"
 
 # ── 3. Python dependencies ────────────────────────────────────────────────────
 b "Installing Python dependencies"
 "$VENV_PY" -m pip install --quiet --upgrade pip
 "$VENV_PY" -m pip install --quiet -r requirements.txt
-ok "playwright, pytesseract, pillow installed"
+ok "playwright, pywebview, pytesseract, pillow installed"
+fi  # want light
 
+if want heavy; then
 # ── 4. Playwright Chromium (+ system libs on Linux) ───────────────────────────
 b "Installing Playwright's Chromium browser"
 if [ "$OS" = "Linux" ]; then
@@ -146,7 +170,9 @@ if [ "$OS" = "Linux" ]; then
     fi
     ok "native-window deps attempted (browser fallback always works)"
 fi
+fi  # want heavy
 
+if want final; then
 # ── 6. Credentials (.env) ─────────────────────────────────────────────────────
 b "Setting up credentials (.env)"
 if [ -f ".env" ] && grep -q "KEKA_PASSWORD=" .env && ! grep -q "KEKA_PASSWORD=$" .env; then
@@ -197,8 +223,13 @@ elif [ "$OS" = "Linux" ]; then
 else
     warn "Unknown OS — set up scheduling manually (see README)."
 fi
+fi  # want final
 
 # ── done ──────────────────────────────────────────────────────────────────────
-printf "\n\033[1;32m🎉 All set!\033[0m Keka Automate will clock you in at 9 AM and out at 6 PM, Mon–Fri.\n"
-printf "   Logs:        %s/logs/\n" "$KEKA"
-printf "   Test it now: %s keka_punch_in.py   (then keka_punch_out.py)\n\n" "$VENV_PY"
+if [ "$PHASE" = "all" ]; then
+    printf "\n\033[1;32m🎉 All set!\033[0m Keka Automate will clock you in and out on your schedule, Mon–Fri.\n"
+    printf "   Logs:        %s/logs/\n" "$KEKA"
+    printf "   Test it now: %s keka_punch_in.py   (then keka_punch_out.py)\n\n" "$VENV_PY"
+else
+    printf "\n\033[1;32m✓ %s dependencies installed.\033[0m\n" "$PHASE"
+fi

@@ -36,37 +36,45 @@ for a 10-second security code (more on that below 👇).
 
 ## 🚀 How to use it (start here)
 
-**1 · Install** — one command sets up everything:
-```bash
-./setup.sh                                                   # 🍎 macOS · 🐧 Linux
-powershell -ExecutionPolicy Bypass -File setup.ps1           # 🪟 Windows
-```
-It installs the dependencies, then asks for your Keka URL / email / password and
-opens a browser once for your OTP.
+**No terminal needed.** Just open the app and follow the on-screen wizard.
 
-**2 · (Optional) Make it a clickable app** with a name + icon:
+**1 · Get the clickable app.** Grab the project folder and build the launcher once
+(this is the only command; end-users you share the folder with never touch it):
 ```bash
 bash packaging/build_macos_app.sh                                          # 🍎 → Auto-Keka.app
 bash packaging/build_linux_app.sh                                          # 🐧 → app-menu entry
 powershell -ExecutionPolicy Bypass -File packaging\build_windows_app.ps1   # 🪟 → Desktop/Start-Menu shortcut
 ```
-Now open **Auto-Keka** from your Dock / apps menu / Start menu. *(Or skip this and
-just run `.venv/bin/python keka_ui.py`.)*
 
-**3 · Set it up once** — in the app, click the **⚙️ gear** (top-right):
-- **Account** → your Keka URL, email, password → **Save credentials**
-- **Schedule** → clock-in and clock-out times → **Save & apply schedule**
+**2 · Open Auto-Keka** from your Dock / apps menu / Start menu.
+- **First run:** a *"Setting up…"* panel appears and quietly downloads the browser
+  + OCR engine it needs (one time). No terminal, no `./setup.sh`.
 
-**4 · First login** → click **🔑 Refresh session** → an **OTP box** pops up → type
-the code from your email. Done.
+**3 · Follow the wizard** — it walks you through everything, in the window:
+```
+①  Enter your Keka URL · email · password        →  Continue
+②  It signs you in automatically (solves captcha) →  📧 type the OTP from your email
+③  Pick your clock-in & clock-out times           →  Finish
+④  ✅ Done — the background schedule is armed
+```
 
 **That's it — it now runs itself.** It clocks you **in and out at your set times,
-Mon–Fri**, in the background. Any time, you can also:
+Mon–Fri**, in the background — *even when the app window is closed*, and it
+**re-opens automatically when you log into your computer**. Any time, you can also:
 - ☀️ **Clock In** / 🌙 **Clock Out** on demand (it never double-punches)
 - Watch **This Week** + **Activity** to see what it's done
-- **Every ~14 days** the OTP box pops again — enter a fresh code, set for another 2 weeks
+- Change times / credentials from the **⚙️ gear** (top-right)
+- **Every ~14 days** an OTP box pops again — enter a fresh code, set for another 2 weeks
 
-> No GUI? Everything works from the terminal too — see **Handy commands** below.
+> **Prefer the terminal?** You can still run the classic one-shot installer instead
+> of the app: `./setup.sh` (macOS/Linux) or
+> `powershell -ExecutionPolicy Bypass -File setup.ps1` (Windows). See
+> **Handy commands** below.
+
+> **🐧 Linux note:** the OCR engine (tesseract) installs via your package manager,
+> which needs `sudo`. If the in-app setup can't get root, it'll tell you — just run
+> `./setup.sh --phase heavy` once in a terminal. macOS & Windows install with no
+> admin rights.
 
 ---
 
@@ -273,20 +281,32 @@ schtasks /Delete /F /TN Keka\PunchIn                # remove (also PunchOut, Rea
 ## 📁 What's in the box
 
 ```
-setup.sh / setup.ps1   🚀  one-command installer (macOS/Linux · Windows)
-keka_ui.py             🖥️  desktop control panel (Tkinter) with in-app OTP box
+bootstrap.py / .ps1    🥾  what the app runs FIRST — self-installs deps, then opens the UI
+setup.sh / setup.ps1   🚀  one-command installer / dep engine (--phase light|heavy|all)
+keka_ui.py             🖥️  desktop app: first-run wizard + control panel + in-app OTP box
 keka_setup.py          🪪  one-time login + OTP → saves session
 keka_punch_in.py       ☀️  clock in
 keka_punch_out.py      🌙  clock out
 keka_check.py          🐕  reauth watchdog
-keka_common.py         🧠  shared logic (login, captcha OCR, session, clicking)
+keka_common.py         🧠  shared logic (login, captcha OCR, session, deps, autostart)
+ui/index.html          🎨  the glass dashboard + setup/wizard overlays
 requirements.txt       📦  Python dependencies
+packaging/             📦  build the clickable app (name + icon) per OS
 scheduling/            ⏰  install_macos.sh · install_linux.sh · install_windows.ps1
 .github/workflows/     🧪  CI — tests installers + OCR on macOS/Linux/Windows
 .env                   🔐  your secrets (git-ignored)
 session.json           🍪  saved login (git-ignored)
 logs/                  📄  run logs (git-ignored)
 ```
+
+**How the app starts itself (under the hood):** the launcher runs `bootstrap.py`,
+which installs only the *light* deps (venv + pip packages — no admin) behind a
+small splash, then opens the window. The window installs the *heavy* deps
+(Chromium + tesseract) in the background, live in the *"Setting up…"* panel. When
+you finish the wizard it registers an **auto-open-at-login** entry (a `RunAtLoad`
+LaunchAgent on macOS, a `~/.config/autostart` entry on Linux, a `Run` key on
+Windows). Closing the window never stops the schedule — that's a separate OS-level
+job (launchd / cron / Task Scheduler).
 
 ---
 

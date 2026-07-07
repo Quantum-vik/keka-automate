@@ -128,6 +128,143 @@ def update_env(updates):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+# ── Dependency readiness (for the self-bootstrapping app) ─────────────────────
+# The app opens as soon as the LIGHT deps (pip packages) exist, then installs
+# the HEAVY deps (Chromium + tesseract) in the background. These helpers let the
+# UI know whether the heavy deps are present yet.
+def _playwright_browsers_dir():
+    override = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if override and override != "0":
+        return override
+    home = os.path.expanduser("~")
+    if sys.platform == "darwin":
+        return os.path.join(home, "Library", "Caches", "ms-playwright")
+    if sys.platform.startswith("win"):
+        base = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
+        return os.path.join(base, "ms-playwright")
+    return os.path.join(home, ".cache", "ms-playwright")
+
+
+def chromium_installed():
+    """True if Playwright's Chromium has been downloaded."""
+    d = _playwright_browsers_dir()
+    if not os.path.isdir(d):
+        return False
+    for name in os.listdir(d):
+        if name.startswith("chromium-") or name.startswith("chromium_headless_shell-"):
+            return True
+    return False
+
+
+def deps_ready():
+    """True when the heavy deps (Chromium + tesseract OCR) are both present."""
+    return bool(_find_tesseract()) and chromium_installed()
+
+
+# ── First-run onboarding flag ─────────────────────────────────────────────────
+def is_onboarded():
+    return _load_env().get("KEKA_ONBOARDED", "") == "1"
+
+
+def mark_onboarded():
+    update_env({"KEKA_ONBOARDED": "1"})
+
+
+# ── Auto-open at login (cross-platform) ───────────────────────────────────────
+def _venv_python(windowless=False):
+    """Path to the repo's venv interpreter (falls back to the current one)."""
+    if sys.platform.startswith("win"):
+        scripts = os.path.join(SCRIPT_DIR, ".venv", "Scripts")
+        if windowless:
+            pw = os.path.join(scripts, "pythonw.exe")
+            if os.path.exists(pw):
+                return pw
+        p = os.path.join(scripts, "python.exe")
+        return p if os.path.exists(p) else sys.executable
+    p = os.path.join(SCRIPT_DIR, ".venv", "bin", "python")
+    return p if os.path.exists(p) else sys.executable
+
+
+def install_autostart():
+    """Launch the Auto-Keka window automatically at login. Best-effort → bool."""
+    ui = os.path.join(SCRIPT_DIR, "keka_ui.py")
+    try:
+        if sys.platform == "darwin":
+            py = _venv_python()
+            la = os.path.expanduser("~/Library/LaunchAgents")
+            os.makedirs(la, exist_ok=True)
+            plist = os.path.join(la, "com.keka.app.plist")
+            with open(plist, "w", encoding="utf-8") as f:
+                f.write(
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+                    '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+                    '<plist version="1.0"><dict>\n'
+                    '  <key>Label</key><string>com.keka.app</string>\n'
+                    '  <key>ProgramArguments</key><array>'
+                    f'<string>{py}</string><string>{ui}</string></array>\n'
+                    '  <key>RunAtLoad</key><true/>\n'
+                    '  <key>ProcessType</key><string>Interactive</string>\n'
+                    '</dict></plist>\n'
+                )
+            subprocess.run(["launchctl", "unload", plist], capture_output=True)
+            subprocess.run(["launchctl", "load", plist], capture_output=True)
+            return True
+        if sys.platform.startswith("linux"):
+            py = _venv_python()
+            ad = os.path.expanduser("~/.config/autostart")
+            os.makedirs(ad, exist_ok=True)
+            with open(os.path.join(ad, "auto-keka.desktop"), "w", encoding="utf-8") as f:
+                f.write(
+                    "[Desktop Entry]\nType=Application\nName=Auto-Keka\n"
+                    f"Exec={py} {ui}\nX-GNOME-Autostart-enabled=true\nTerminal=false\n"
+                )
+            return True
+        if sys.platform.startswith("win"):
+            import winreg
+            py = _venv_python(windowless=True)
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                 r"Software\Microsoft\Windows\CurrentVersion\Run",
+                                 0, winreg.KEY_SET_VALUE)
+            winreg.SetValueEx(key, "AutoKeka", 0, winreg.REG_SZ, f'"{py}" "{ui}"')
+            winreg.CloseKey(key)
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def remove_autostart():
+    """Undo install_autostart(). Best-effort → bool."""
+    try:
+        if sys.platform == "darwin":
+            plist = os.path.expanduser("~/Library/LaunchAgents/com.keka.app.plist")
+            subprocess.run(["launchctl", "unload", plist], capture_output=True)
+            if os.path.exists(plist):
+                os.remove(plist)
+            return True
+        if sys.platform.startswith("linux"):
+            f = os.path.expanduser("~/.config/autostart/auto-keka.desktop")
+            if os.path.exists(f):
+                os.remove(f)
+            return True
+        if sys.platform.startswith("win"):
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                 r"Software\Microsoft\Windows\CurrentVersion\Run",
+                                 0, winreg.KEY_SET_VALUE)
+            try:
+                winreg.DeleteValue(key, "AutoKeka")
+            except FileNotFoundError:
+                pass
+            winreg.CloseKey(key)
+            return True
+    except Exception:
+        return False
+    return False
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 def get_logger(log_file):
     # File handler always; console handler only for interactive runs. Under
     # launchd/cron, stdout is already redirected to the log file, so adding a

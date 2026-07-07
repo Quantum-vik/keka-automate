@@ -11,7 +11,10 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$REPO/.venv/bin/python"
-[ -x "$PY" ] || { echo "Run ./setup.sh first ($PY missing)"; exit 1; }
+# Icon generation needs Pillow (a light dep). Bootstrap it if the venv is absent.
+[ -x "$PY" ] || { echo "▶ venv missing — installing light deps…"; bash "$REPO/setup.sh" --phase light; }
+[ -x "$PY" ] || { echo "Could not create the venv. Run ./setup.sh manually."; exit 1; }
+SYS_PY="$(command -v python3 || echo /usr/bin/python3)"
 
 ICON_DIR="$HOME/.local/share/icons"
 APPS_DIR="$HOME/.local/share/applications"
@@ -24,7 +27,7 @@ cat > "$APPS_DIR/auto-keka.desktop" <<EOF
 Type=Application
 Name=Auto-Keka
 Comment=Keka auto attendance — clock in/out
-Exec=$PY $REPO/keka_ui.py
+Exec=$SYS_PY $REPO/bootstrap.py
 Icon=$ICON_DIR/auto-keka.png
 Terminal=false
 Categories=Utility;Office;

@@ -40,7 +40,7 @@
   /* ── window chrome ───────────────────────────────────────────────────── */
   #win { position:relative; width:100%; height:100vh; border-radius:0; overflow:hidden;
     display:flex; flex-direction:column; background:#eef4f2; border:none; box-shadow:none; }
-  #titlebar { display:flex; align-items:center; gap:12px; height:52px; padding:0 18px;
+  #titlebar { position:relative; z-index:40; display:flex; align-items:center; gap:12px; height:52px; padding:0 18px;
     border-bottom:.5px solid rgba(6,60,50,.10); background:rgba(255,255,255,.28); }
   .lights { display:flex; gap:8px; align-items:center; }
   .lights i { width:12px; height:12px; border-radius:50%; border:.5px solid rgba(0,0,0,.08); display:block; }
@@ -161,6 +161,43 @@
   .acct-ok .dot { width:7px; height:7px; border-radius:50%; background:var(--present); }
   .save.ghost { background:rgba(6,60,50,.06); color:var(--teal-600); border:.5px solid rgba(6,60,50,.14); }
   .save.ghost:hover { background:rgba(6,60,50,.12); }
+
+  /* ── first-run overlays: dependency setup + onboarding wizard ──────────── */
+  #setup, #wizard { position:absolute; inset:0; z-index:30; display:none; align-items:center; justify-content:center;
+    padding:34px 24px; overflow-y:auto; background:rgba(6,40,35,.6);
+    backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); }
+  #setup.show, #wizard.show { display:flex; }
+  .wsheet { width:100%; max-width:460px; margin:auto; border-radius:24px; padding:30px 28px; background:rgba(255,255,255,.85);
+    backdrop-filter:blur(40px) saturate(180%); -webkit-backdrop-filter:blur(40px) saturate(180%);
+    border:.5px solid rgba(255,255,255,.88); box-shadow:0 26px 74px rgba(4,40,36,.55); }
+  .wsheet h2 { margin:0 0 5px; font-size:22px; font-weight:700; letter-spacing:-.02em; color:var(--ink); }
+  .wsheet p.lead { margin:0 0 20px; font-size:13.5px; color:var(--ink-2); line-height:1.55; }
+  .spinner { width:32px; height:32px; border-radius:50%; border:3px solid rgba(15,169,142,.22);
+    border-top-color:var(--teal-600); animation:spin .9s linear infinite; margin:4px 0 16px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .setuplog { height:126px; overflow:auto; border-radius:13px; padding:12px 14px; background:rgba(6,60,50,.06);
+    font-family:var(--mono); font-size:11.5px; line-height:1.75; color:var(--ink-2); }
+  .setuplog div { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .wsteps { display:flex; gap:7px; margin-bottom:20px; }
+  .wsteps i { width:28px; height:4px; border-radius:2px; background:rgba(6,60,50,.15); display:block; }
+  .wsteps i.on { background:var(--teal-grad); }
+  .wstep { display:none; } .wstep.on { display:block; }
+  .wfield { display:flex; flex-direction:column; gap:6px; margin-bottom:12px; }
+  .wfield label { font-size:12px; font-weight:600; color:var(--ink-2); }
+  .wfield input { width:100%; min-width:0; height:44px; border-radius:12px; border:.5px solid var(--glass-border);
+    background:rgba(255,255,255,.82); font-size:14px; color:var(--ink); padding:0 13px; font-family:inherit; }
+  .wfield input:focus { outline:none; border-color:var(--teal-500); box-shadow:0 0 0 3px rgba(15,169,142,.15); }
+  .wrow { display:flex; gap:12px; } .wrow > .wfield { flex:1; }
+  .wfield.mono input { font-family:var(--mono); letter-spacing:.05em; }
+  .wbtn { width:100%; height:47px; border:none; border-radius:13px; background:var(--teal-600); color:#fff;
+    font-weight:650; font-size:14.5px; cursor:pointer; margin-top:8px; }
+  .wbtn:hover { background:var(--teal-500); }
+  .wbtn:disabled { opacity:.5; cursor:default; }
+  .werr { color:#c0603a; font-size:12.5px; font-weight:600; margin-top:10px; min-height:16px; }
+  .wtick { font-size:44px; line-height:1; margin-bottom:6px; }
+  .wnote { display:flex; gap:9px; align-items:flex-start; margin-top:14px; padding:12px 14px; border-radius:13px;
+    background:rgba(15,169,142,.10); font-size:12.5px; color:#0b6b58; line-height:1.5; }
+  #wOtpWrap { display:none; margin-top:6px; }
 </style>
 </head>
 <body>
@@ -300,6 +337,79 @@
       </div>
     </div>
 
+    <!-- FIRST-RUN: dependency setup (heavy deps install in the background) -->
+    <div id="setup">
+      <div class="wsheet">
+        <div class="spinner"></div>
+        <h2>Setting up Auto-Keka</h2>
+        <p class="lead">Downloading the headless browser and OCR engine that log you
+          in and read the captcha. This happens only once — hang tight.</p>
+        <div class="setuplog" id="setupLog"></div>
+      </div>
+    </div>
+
+    <!-- FIRST-RUN: onboarding wizard (account → sign in → schedule → done) -->
+    <div id="wizard">
+      <div class="wsheet">
+        <div class="wsteps"><i></i><i></i><i></i></div>
+
+        <!-- Step 1: account -->
+        <div class="wstep" data-step="account">
+          <h2>Welcome 👋</h2>
+          <p class="lead">Enter your Keka login. It's stored only on this computer
+            (never uploaded) and used to sign you in automatically.</p>
+          <div class="wfield"><label>Company Keka URL</label>
+            <input id="wUrl" placeholder="https://your-company.keka.com" /></div>
+          <div class="wfield"><label>Email</label>
+            <input id="wEmail" placeholder="you@company.com" /></div>
+          <div class="wfield"><label>Password</label>
+            <input id="wPass" type="password" placeholder="••••••••" /></div>
+          <div class="werr" id="wAcctErr"></div>
+          <button class="wbtn" id="wAcctBtn">Continue</button>
+        </div>
+
+        <!-- Step 2: sign in + OTP -->
+        <div class="wstep" data-step="signin">
+          <h2>Signing you in</h2>
+          <div class="spinner"></div>
+          <p class="lead" id="wSignStatus">Opening Keka and signing in…</p>
+          <div id="wOtpWrap">
+            <div class="wfield mono"><label>One-time code (from your email)</label>
+              <input id="wOtp" maxlength="8" placeholder="••••••" inputmode="numeric" /></div>
+            <button class="wbtn" id="wOtpBtn">Verify code</button>
+          </div>
+          <div class="werr" id="wSignErr"></div>
+          <button class="wbtn" id="wRetry" style="display:none;background:rgba(6,60,50,.08);color:var(--teal-600)">Try again</button>
+        </div>
+
+        <!-- Step 3: schedule -->
+        <div class="wstep" data-step="schedule">
+          <h2>When should I clock you in?</h2>
+          <p class="lead">Pick your daily times. I'll clock you in and out
+            automatically, Monday to Friday — even when this app is closed.</p>
+          <div class="wrow">
+            <div class="wfield mono"><label>Clock-in time</label>
+              <input id="wIn" placeholder="09:00" maxlength="5" /></div>
+            <div class="wfield mono"><label>Clock-out time</label>
+              <input id="wOut" placeholder="18:00" maxlength="5" /></div>
+          </div>
+          <div class="werr" id="wSchedErr"></div>
+          <button class="wbtn" id="wFinishBtn">Finish setup</button>
+        </div>
+
+        <!-- Step 4: done -->
+        <div class="wstep" data-step="done">
+          <div class="wtick">✅</div>
+          <h2>You're all set</h2>
+          <p class="lead">Auto-Keka will clock you in and out on schedule from now on.</p>
+          <div class="wnote"><span>ℹ️</span><span>It keeps running in the background even
+            if you close this window, and re-opens automatically when you log in. Your
+            device stays signed in for ~14 days between one-time codes.</span></div>
+          <button class="wbtn" id="wDoneBtn">Open dashboard</button>
+        </div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -347,9 +457,9 @@ const api = {
 
 /* ── Python → JS callbacks (Python calls these via window.evaluate_js) ─────── */
 window.KekaUI = {
-  onLog(entry)        { pushActivity(entry); },        // {time,msg,kind}
-  onOtpRequired(retry){ showOtp(!!retry); },
-  onOtpDone()         { hideOtp(); },
+  onLog(entry)        { if ($("#setup").classList.contains("show")) appendSetupLog(entry.msg); pushActivity(entry); },
+  onOtpRequired(retry){ (otpTarget==="wizard" ? wizShowOtp : showOtp)(!!retry); },
+  onOtpDone()         { hideOtp(); wizHideOtp(); },
   onState(state)      { STATE = normalize(state); render(); },
 };
 
@@ -368,6 +478,9 @@ function normalize(s) {
   s = s || {};
   if (!s.week || !s.week.length) s.week = buildMockWeek();
   if (!s.activity) s.activity = MOCK.activity.slice();
+  // Browser preview (no bridge) has no deps/onboarding info → show the dashboard.
+  if (s.depsReady === undefined) s.depsReady = true;
+  if (s.onboarded === undefined) s.onboarded = true;
   return s;
 }
 
@@ -418,6 +531,7 @@ function render() {
 
   renderWeek(STATE.week);
   renderFeed(STATE.activity);
+  applyGates();
 }
 
 function renderWeek(week) {
@@ -497,6 +611,94 @@ function buildMockWeek(){
 function mockState(){ const s=JSON.parse(JSON.stringify(MOCK)); s.clockInAt=todayAt(9,2).getTime(); s.week=buildMockWeek(); return s; }
 function mockPunch(){ return { ok:true }; }
 function mockRefresh(){ return { ok:true, message:"Session refreshed — device pass valid 14 days" }; }
+
+/* ── first-run: dependency setup + onboarding wizard ─────────────────────── */
+let _depsKicked = false, _wizStep = null, otpTarget = "dashboard";
+
+function applyGates() {
+  if (!STATE) return;
+  const depsReady = STATE.depsReady !== false;
+  const onboarded = STATE.onboarded !== false;
+  $("#setup").classList.toggle("show", !depsReady);
+  if (depsReady && !onboarded) { $("#wizard").classList.add("show"); if (!_wizStep) wizGoto("account"); }
+  else { $("#wizard").classList.remove("show"); }
+  // Kick the background heavy-deps install exactly once.
+  if (!depsReady && hasBridge() && !_depsKicked) { _depsKicked = true; window.pywebview.api.install_deps(); }
+}
+function appendSetupLog(msg) {
+  const el = $("#setupLog"); if (!el) return;
+  const d = document.createElement("div"); d.textContent = msg;
+  el.appendChild(d); el.scrollTop = el.scrollHeight;
+  while (el.childNodes.length > 60) el.removeChild(el.firstChild);
+}
+
+function wizGoto(step) {
+  _wizStep = step;
+  document.querySelectorAll("#wizard .wstep").forEach(el => el.classList.toggle("on", el.dataset.step === step));
+  const idx = { account:0, signin:1, schedule:2, done:2 }[step] ?? 0;
+  document.querySelectorAll("#wizard .wsteps i").forEach((el, i) => el.classList.toggle("on", i <= idx));
+  if (step === "account") {
+    $("#wUrl").value   = (STATE && STATE.config && STATE.config.url)   || "";
+    $("#wEmail").value = (STATE && STATE.config && STATE.config.email) || "";
+  }
+  if (step === "schedule") {
+    $("#wIn").value  = (STATE && STATE.scheduleIn)  || "09:00";
+    $("#wOut").value = (STATE && STATE.scheduleOut) || "18:00";
+  }
+}
+async function wizAccount() {
+  const url = $("#wUrl").value.trim(), email = $("#wEmail").value.trim(), password = $("#wPass").value;
+  $("#wAcctErr").textContent = "";
+  if (!url || !email || !password) { $("#wAcctErr").textContent = "Please fill in all three fields."; return; }
+  if (hasBridge()) await window.pywebview.api.save_creds({ url, email, password });
+  if (STATE) STATE.config = Object.assign({}, STATE.config, { url, email, configured:true });
+  wizSignIn();
+}
+async function wizSignIn() {
+  wizGoto("signin");
+  $("#wSignErr").textContent = ""; $("#wRetry").style.display = "none"; wizHideOtp();
+  $("#wSignStatus").textContent = "Opening Keka and signing in…";
+  otpTarget = "wizard";
+  const r = await api.refresh();
+  otpTarget = "dashboard";
+  if (r && r.ok) { wizGoto("schedule"); }
+  else {
+    $("#wSignStatus").textContent = "Sign-in didn't complete.";
+    $("#wSignErr").textContent = (r && r.message) || "Check your details and try again.";
+    $("#wRetry").style.display = "block";
+  }
+}
+function wizShowOtp(retry) {
+  $("#wOtpWrap").style.display = "block";
+  $("#wSignStatus").textContent = "Enter the one-time code we emailed you.";
+  $("#wOtp").value = ""; $("#wOtp").focus();
+  if (retry) $("#wOtp").placeholder = "wrong code — retry";
+}
+function wizHideOtp() { const w = $("#wOtpWrap"); if (w) w.style.display = "none"; }
+async function wizVerifyOtp() {
+  const v = $("#wOtp").value.trim(); if (!v) return;
+  wizHideOtp(); $("#wSignStatus").textContent = "Verifying…";
+  await api.submitOtp(v);
+}
+async function wizFinish() {
+  const inT = $("#wIn").value.trim(), outT = $("#wOut").value.trim();
+  $("#wSchedErr").textContent = "";
+  if (!validTime(inT) || !validTime(outT)) { $("#wSchedErr").textContent = "Use 24-hour HH:MM, e.g. 09:00 and 18:00."; return; }
+  if (hasBridge()) {
+    await window.pywebview.api.apply_schedule({ inTime:inT, outTime:outT });
+    await window.pywebview.api.finish_onboarding();
+  }
+  if (STATE) { STATE.scheduleIn = inT; STATE.scheduleOut = outT; STATE.onboarded = true; }
+  wizGoto("done");
+}
+function wizOpenDashboard() { if (STATE) STATE.onboarded = true; _wizStep = null; $("#wizard").classList.remove("show"); render(); }
+
+$("#wAcctBtn").addEventListener("click", wizAccount);
+$("#wOtpBtn").addEventListener("click", wizVerifyOtp);
+$("#wOtp").addEventListener("keydown", e => { if (e.key === "Enter") wizVerifyOtp(); });
+$("#wRetry").addEventListener("click", wizSignIn);
+$("#wFinishBtn").addEventListener("click", wizFinish);
+$("#wDoneBtn").addEventListener("click", wizOpenDashboard);
 
 /* ── boot ───────────────────────────────────────────────────────────────── */
 /* ── settings sheet ── */

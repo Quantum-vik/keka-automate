@@ -38,17 +38,25 @@ for a 10-second security code (more on that below 👇).
 
 **No terminal needed.** Just open the app and follow the on-screen wizard.
 
-**1 · Get the clickable app.** Grab the project folder and build the launcher once
-(this is the only command; end-users you share the folder with never touch it):
-```bash
-bash packaging/build_macos_app.sh                                          # 🍎 → Auto-Keka.app
-bash packaging/build_linux_app.sh                                          # 🐧 → app-menu entry
-powershell -ExecutionPolicy Bypass -File packaging\build_windows_app.ps1   # 🪟 → Desktop/Start-Menu shortcut
-```
+**1 · Download** the latest zip from the
+[**Releases**](https://github.com/Quantum-vik/keka-automate/releases) page and
+**unzip** it anywhere (Desktop is fine).
 
-**2 · Open Auto-Keka** from your Dock / apps menu / Start menu.
+**2 · Double-click the launcher for your OS** (inside the unzipped folder):
+
+| OS | Double-click |
+|----|--------------|
+| 🍎 macOS   | `Auto-Keka.command` |
+| 🪟 Windows | `Auto-Keka.bat` |
+| 🐧 Linux   | `Auto-Keka.sh` |
+
 - **First run:** a *"Setting up…"* panel appears and quietly downloads the browser
   + OCR engine it needs (one time). No terminal, no `./setup.sh`.
+- **Unknown-developer warning?** The app isn't code-signed, so your OS may warn once:
+  **macOS** → right-click the launcher → *Open* → *Open*. **Windows** → *More info* →
+  *Run anyway*. After that it opens normally.
+- *Want a proper Dock/Start-menu icon?* Run `packaging/build_macos_app.sh`
+  (or `build_linux_app.sh` / `build_windows_app.ps1`) for a named, icon'd app.
 
 **3 · Follow the wizard** — it walks you through everything, in the window:
 ```

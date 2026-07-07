@@ -53,13 +53,52 @@ if _tess:
     pytesseract.pytesseract.tesseract_cmd = _tess
 
 # ── Config ────────────────────────────────────────────────────────────────────
-SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
-SESSION_FILE = os.path.join(SCRIPT_DIR, "session.json")
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Predictable, cross-platform log dir next to the code (~/keka/logs). Same path
-# on macOS/Linux/Windows, unlike tempfile.gettempdir() which varies per OS.
-LOG_DIR = os.path.join(SCRIPT_DIR, "logs")
+
+def _app_data_dir():
+    """A STABLE per-user folder for our data (.env, session, license, logs).
+
+    Crucial for the compiled one-file build: Nuitka unpacks the binary to a
+    throwaway temp dir each launch, so anything stored next to the code would be
+    lost between runs. A proper OS app-data folder persists.
+    """
+    home = os.path.expanduser("~")
+    if sys.platform == "darwin":
+        base = os.path.join(home, "Library", "Application Support")
+    elif sys.platform.startswith("win"):
+        base = os.environ.get("APPDATA") or os.path.join(home, "AppData", "Roaming")
+    else:
+        base = os.environ.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share")
+    d = os.path.join(base, "Auto-Keka")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+DATA_DIR     = _app_data_dir()
+SESSION_FILE = os.path.join(DATA_DIR, "session.json")
+ENV_FILE     = os.path.join(DATA_DIR, ".env")
+LOG_DIR      = os.path.join(DATA_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
+
+
+def _migrate_legacy():
+    """One-time move of files from the old 'next to the code' layout into
+    DATA_DIR, so existing users (and their running scheduler) keep working."""
+    for name, dest in ((".env", ENV_FILE), ("session.json", SESSION_FILE),
+                       ("license.key", os.path.join(DATA_DIR, "license.key"))):
+        legacy = os.path.join(SCRIPT_DIR, name)
+        if os.path.exists(legacy) and not os.path.exists(dest):
+            try:
+                shutil.copy2(legacy, dest)
+                os.chmod(dest, 0o600)
+            except OSError:
+                pass
+
+
+_migrate_legacy()
+
+
 def log_path(name):
     return os.path.join(LOG_DIR, name)
 
@@ -70,9 +109,9 @@ def tmp_path(name):
 
 
 def _load_env():
-    """Parse ~/keka/.env (KEY=VALUE lines) into a dict. Real env vars win."""
+    """Parse DATA_DIR/.env (KEY=VALUE lines) into a dict. Real env vars win."""
     values = {}
-    env_path = os.path.join(SCRIPT_DIR, ".env")
+    env_path = ENV_FILE
     if os.path.exists(env_path):
         # utf-8-sig transparently strips a UTF-8 BOM (Windows editors/PowerShell
         # add one), which would otherwise corrupt the first key name.
@@ -115,7 +154,7 @@ def update_env(updates):
     for k, v in updates.items():
         if v is not None:
             current[str(k)] = str(v)
-    env_path = os.path.join(SCRIPT_DIR, ".env")
+    env_path = ENV_FILE
     lines = ["# Keka credentials + settings. Private — keep chmod 600."]
     lines += [f"{k}={v}" for k, v in current.items()]
     with open(env_path, "w", encoding="utf-8") as f:

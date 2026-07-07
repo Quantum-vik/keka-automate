@@ -61,6 +61,15 @@ die() { printf "  \033[1;31m✗ %s\033[0m\n" "$*" >&2; exit 1; }
 
 OS="$(uname -s)"   # Linux or Darwin
 
+# Per-user data folder (must match keka_common.py DATA_DIR) — .env, session, and
+# license live here, NOT next to the code, so the compiled binary can persist them.
+if [ "$OS" = "Darwin" ]; then
+    DATA_DIR="$HOME/Library/Application Support/Auto-Keka"
+else
+    DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/Auto-Keka"
+fi
+mkdir -p "$DATA_DIR"
+
 # Keep apt fully non-interactive. `playwright install --with-deps` shells out to
 # apt, which can otherwise stall on a tzdata timezone prompt on a fresh/minimal
 # Linux box (a real hang, seen in container testing).
@@ -175,20 +184,21 @@ fi  # want heavy
 if want final; then
 # ── 6. Credentials (.env) ─────────────────────────────────────────────────────
 b "Setting up credentials (.env)"
-if [ -f ".env" ] && grep -q "KEKA_PASSWORD=" .env && ! grep -q "KEKA_PASSWORD=$" .env; then
+ENV_FILE="$DATA_DIR/.env"
+if [ -f "$ENV_FILE" ] && grep -q "KEKA_PASSWORD=" "$ENV_FILE" && ! grep -q "KEKA_PASSWORD=$" "$ENV_FILE"; then
     ok ".env already present — leaving it as is"
 else
-    echo "  Enter your Keka details (stored locally in .env, never uploaded):"
+    echo "  Enter your Keka details (stored locally in $ENV_FILE, never uploaded):"
     read -rp "    Company Keka URL (e.g. https://acme.keka.com): " KURL || true
     read -rp "    Email: " KMAIL || true
     read -rsp "    Password: " KPASS || true; echo
-    cat > .env <<EOF
+    cat > "$ENV_FILE" <<EOF
 # Keka credentials + tenant. Private — keep chmod 600.
 KEKA_BASE_URL=$KURL
 KEKA_EMAIL=$KMAIL
 KEKA_PASSWORD=$KPASS
 EOF
-    chmod 600 .env
+    chmod 600 "$ENV_FILE"
     ok ".env created (chmod 600)"
 fi
 
@@ -198,14 +208,14 @@ if [ "$DO_LOGIN_STEP" = "0" ]; then
     ok "skipped (--no-login)"
 else
     DO_LOGIN=1
-    if [ -f "session.json" ]; then
+    if [ -f "$DATA_DIR/session.json" ]; then
         read -rp "  A saved session already exists. Re-do the login? [y/N] " ans || true
         case "${ans:-N}" in y|Y) DO_LOGIN=1 ;; *) DO_LOGIN=0 ;; esac
     fi
     if [ "$DO_LOGIN" = "1" ]; then
         echo "  A browser will open. Complete any 2FA / OTP prompt, then it saves your session."
         "$VENV_PY" keka_setup.py
-        [ -f "session.json" ] || die "Login didn't complete — no session saved. Re-run ./setup.sh"
+        [ -f "$DATA_DIR/session.json" ] || die "Login didn't complete — no session saved. Re-run ./setup.sh"
         ok "session saved"
     else
         ok "keeping existing session"

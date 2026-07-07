@@ -18,3 +18,9 @@ packaging/auto-keka.ico
 # Licensing secrets — NEVER commit
 tools/license_private.pem
 license.key
+
+# Nuitka / build output
+dist/
+*.build/
+*.dist/
+*.onefile-build/

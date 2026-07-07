@@ -70,6 +70,11 @@ Runs everything by default: venv, deps, Chromium, tesseract, .env, login, schedu
 $Keka = $PSScriptRoot
 Set-Location $Keka
 
+# Per-user data folder (must match keka_common.py DATA_DIR) — .env, session, and
+# license live here, NOT next to the code, so the compiled binary can persist them.
+$DataDir = Join-Path ($env:APPDATA) 'Auto-Keka'
+New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+
 # ── Pretty output helpers ──────────────────────────────────────────────────────
 function Step { param($msg) Write-Host "`n>> $msg" -ForegroundColor Cyan }
 function Ok   { param($msg) Write-Host "  OK  $msg" -ForegroundColor Green }
@@ -153,7 +158,7 @@ if ((Get-Command tesseract -ErrorAction SilentlyContinue) -or (Test-Path $TessPa
 if (Want 'final') {
 # ── 6. Credentials (.env) ─────────────────────────────────────────────────────
 Step "6. Setting up credentials (.env)"
-$EnvFile  = Join-Path $Keka '.env'
+$EnvFile  = Join-Path $DataDir '.env'
 $NeedsEnv = $true
 if (Test-Path $EnvFile) {
     $envContent = Get-Content $EnvFile -Raw
@@ -184,7 +189,7 @@ if ($NoLogin) {
     Ok "skipped (-NoLogin)"
 } else {
     $DoLogin     = $true
-    $SessionFile = Join-Path $Keka 'session.json'
+    $SessionFile = Join-Path $DataDir 'session.json'
     if (Test-Path $SessionFile) {
         $ans = Read-Host "  A saved session already exists. Re-do the login? [y/N]"
         if ($ans -notmatch '^[yY]') { $DoLogin = $false }

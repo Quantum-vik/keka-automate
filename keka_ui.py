@@ -37,6 +37,8 @@ class Backend:
     def __init__(self):
         self.emit = lambda obj: None    # runner sets this (native evaluate_js / SSE)
         self._pw_lock = threading.Lock()  # serialize ALL Playwright/session access
+        self._deps_lock = threading.Lock()  # serialize the heavy-dependency install
+        self._deps_installing = False
         self._otp_event = threading.Event()
         self._otp_value = None
         self._status = None
@@ -86,6 +88,11 @@ class Backend:
         cin, cout = self._today_punches(hist)
         activity = [{"time": h["time"], "msg": h["msg"], "kind": h["kind"]}
                     for h in reversed(hist)][:5]
+        configured = bool(env.get("KEKA_EMAIL") and env.get("KEKA_PASSWORD"))
+        # Treat existing users (already configured + a saved session) as onboarded
+        # so the first-run wizard never re-appears for them.
+        onboarded = (env.get("KEKA_ONBOARDED", "") == "1"
+                     or (configured and os.path.exists(kc.SESSION_FILE)))
         return {
             "clockedIn": self._status == "in",
             "clockInAt": cin, "clockOutAt": cout,
@@ -94,9 +101,48 @@ class Backend:
             "sessionDaysLeft": days,
             "week": self._build_week(hist),
             "activity": activity,
+            "depsReady": kc.deps_ready(),
+            "onboarded": onboarded,
             "config": {"url": env.get("KEKA_BASE_URL", ""), "email": env.get("KEKA_EMAIL", ""),
-                       "configured": bool(env.get("KEKA_EMAIL") and env.get("KEKA_PASSWORD"))},
+                       "configured": configured},
         }
+
+    def install_deps(self):
+        """Install the heavy deps (Chromium + tesseract) in the background,
+        streaming progress to the panel. Safe to call repeatedly."""
+        if kc.deps_ready():
+            self.push_state()
+            return {"ok": True, "ready": True}
+        with self._deps_lock:
+            if kc.deps_ready():
+                self.push_state()
+                return {"ok": True, "ready": True}
+            self._deps_installing = True
+            self.push_log("Setting up — downloading browser + OCR engine…")
+            plat = sys.platform
+            if plat.startswith("win"):
+                cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-File",
+                       os.path.join(kc.SCRIPT_DIR, "setup.ps1"), "-Phase", "heavy"]
+            else:
+                cmd = ["bash", os.path.join(kc.SCRIPT_DIR, "setup.sh"), "--phase", "heavy"]
+            rc = self._run_stream(cmd)
+            ready = kc.deps_ready()
+            self._deps_installing = False
+            self.push_state()
+            if ready:
+                self.push_log("Setup complete — you're ready to sign in ✓", "in")
+            else:
+                self.push_log("Some components need a manual step — see the README "
+                              "or run setup in a terminal.", "out")
+            return {"ok": rc == 0 and ready, "ready": ready}
+
+    def finish_onboarding(self):
+        """Mark first-run complete and register the app to open at login."""
+        kc.mark_onboarded()
+        auto = kc.install_autostart()
+        kc.log_history("info", "Setup finished — automation armed")
+        self.push_state()
+        return {"ok": True, "autostart": bool(auto)}
 
     def clock_in(self):
         return self._do_punch("in")
@@ -267,6 +313,8 @@ class Api:
     def submit_otp(self, code): return self._b.submit_otp(code)
     def save_creds(self, obj):  return self._b.save_creds(obj)
     def apply_schedule(self, obj): return self._b.apply_schedule(obj)
+    def install_deps(self):     return self._b.install_deps()
+    def finish_onboarding(self): return self._b.finish_onboarding()
 
     # frameless-window controls (the design draws its own traffic lights)
     def win_close(self):
@@ -303,7 +351,8 @@ _SHIM = """
     get_state:()=>fetch('/api/state').then(j),
     clock_in:()=>post('/api/clock_in'), clock_out:()=>post('/api/clock_out'),
     refresh_session:()=>post('/api/refresh'), submit_otp:(c)=>post('/api/submit_otp',{code:c}),
-    save_creds:(o)=>post('/api/save_creds',o), apply_schedule:(o)=>post('/api/apply_schedule',o)}};
+    save_creds:(o)=>post('/api/save_creds',o), apply_schedule:(o)=>post('/api/apply_schedule',o),
+    install_deps:()=>post('/api/install_deps'), finish_onboarding:()=>post('/api/finish_onboarding')}};
   try{const es=new EventSource('/events');es.onmessage=(e)=>{const m=JSON.parse(e.data),K=window.KekaUI||{};
     if(m.type==='log'&&K.onLog)K.onLog(m.entry);else if(m.type==='state'&&K.onState)K.onState(m.state);
     else if(m.type==='otp'&&K.onOtpRequired)K.onOtpRequired(m.retry);else if(m.type==='otpDone'&&K.onOtpDone)K.onOtpDone();};}catch(_){}
@@ -366,7 +415,9 @@ def run_browser():
                       "/api/refresh": lambda: backend.refresh_session(),
                       "/api/submit_otp": lambda: backend.submit_otp(body.get("code")),
                       "/api/save_creds": lambda: backend.save_creds(body),
-                      "/api/apply_schedule": lambda: backend.apply_schedule(body)}
+                      "/api/apply_schedule": lambda: backend.apply_schedule(body),
+                      "/api/install_deps": lambda: backend.install_deps(),
+                      "/api/finish_onboarding": lambda: backend.finish_onboarding()}
             fn = routes.get(self.path)
             if not fn: self.send_error(404); return
             try: self._json(fn())

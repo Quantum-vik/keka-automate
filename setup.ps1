@@ -32,11 +32,26 @@
 param(
     [switch]$NoLogin,
     [switch]$NoSchedule,
+    [ValidateSet('all', 'light', 'heavy')]
+    [string]$Phase = 'all',
     [Alias('h')]
     [switch]$Help
 )
 
 $ErrorActionPreference = 'Stop'
+
+# want <group> → $true if this run should do that group of steps.
+#   light = Python/venv/pip;  heavy = Chromium + tesseract;
+#   final = .env + login + schedule (only in the default 'all' phase).
+function Want {
+    param([string]$Group)
+    switch ($Group) {
+        'light' { return ($Phase -eq 'all' -or $Phase -eq 'light') }
+        'heavy' { return ($Phase -eq 'all' -or $Phase -eq 'heavy') }
+        'final' { return ($Phase -eq 'all') }
+    }
+    return $false
+}
 
 # ── Help ───────────────────────────────────────────────────────────────────────
 if ($Help) {
@@ -61,6 +76,10 @@ function Ok   { param($msg) Write-Host "  OK  $msg" -ForegroundColor Green }
 function Warn { param($msg) Write-Host "  !   $msg" -ForegroundColor Yellow }
 function Die  { param($msg) Write-Host "  ERR $msg" -ForegroundColor Red; exit 1 }
 
+# $VenvPy is always defined (the 'heavy' phase needs it even when 'light' is skipped).
+$VenvPy = Join-Path $Keka '.venv\Scripts\python.exe'
+
+if (Want 'light') {
 # ── 1. Python ──────────────────────────────────────────────────────────────────
 Step "1. Checking Python"
 $PyBin = $null
@@ -80,7 +99,6 @@ Ok "$PyBin — $PyVer"
 
 # ── 2. Virtual environment ─────────────────────────────────────────────────────
 Step "2. Creating virtual environment (.venv)"
-$VenvPy = Join-Path $Keka '.venv\Scripts\python.exe'
 if (-not (Test-Path $VenvPy)) {
     & $PyBin -m venv (Join-Path $Keka '.venv')
     if (-not (Test-Path $VenvPy)) {
@@ -95,8 +113,10 @@ if (-not (Test-Path $VenvPy)) {
 Step "3. Installing Python dependencies"
 & $VenvPy -m pip install --quiet --upgrade pip
 & $VenvPy -m pip install --quiet -r (Join-Path $Keka 'requirements.txt')
-Ok "playwright, pytesseract, pillow installed"
+Ok "playwright, pywebview, pytesseract, pillow installed"
+}  # Want light
 
+if (Want 'heavy') {
 # ── 4. Playwright Chromium ─────────────────────────────────────────────────────
 Step "4. Installing Playwright's Chromium browser"
 & $VenvPy -m playwright install chromium
@@ -128,7 +148,9 @@ if ((Get-Command tesseract -ErrorAction SilentlyContinue) -or (Test-Path $TessPa
     }
     Warn "NOTE: tesseract may not be on PATH until a NEW shell; the app also probes '$TessPath'."
 }
+}  # Want heavy
 
+if (Want 'final') {
 # ── 6. Credentials (.env) ─────────────────────────────────────────────────────
 Step "6. Setting up credentials (.env)"
 $EnvFile  = Join-Path $Keka '.env'
@@ -190,11 +212,17 @@ if ($NoSchedule) {
     }
     & $InstallScript
 }
+}  # Want final
 
 # ── Done ───────────────────────────────────────────────────────────────────────
-Write-Host ""
-Write-Host "All set! " -ForegroundColor Green -NoNewline
-Write-Host "Keka Automate will clock you in at 9 AM and out at 6 PM, Mon-Fri."
-Write-Host "   Logs:        $Keka\logs\"
-Write-Host "   Test it now: & `"$VenvPy`" `"$Keka\keka_punch_in.py`"   (then keka_punch_out.py)"
-Write-Host ""
+if ($Phase -eq 'all') {
+    Write-Host ""
+    Write-Host "All set! " -ForegroundColor Green -NoNewline
+    Write-Host "Keka Automate will clock you in and out on your schedule, Mon-Fri."
+    Write-Host "   Logs:        $Keka\logs\"
+    Write-Host "   Test it now: & `"$VenvPy`" `"$Keka\keka_punch_in.py`"   (then keka_punch_out.py)"
+    Write-Host ""
+} else {
+    Write-Host ""
+    Write-Host "OK  $Phase dependencies installed." -ForegroundColor Green
+}

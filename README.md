@@ -36,48 +36,51 @@ for a 10-second security code (more on that below 👇).
 
 ## 🚀 How to use it (start here)
 
-**No terminal needed.** Just open the app and follow the on-screen wizard.
+**No terminal, no Python needed.** Auto-Keka ships as a single self-contained app.
 
-**1 · Download** the latest zip from the
-[**Releases**](https://github.com/Quantum-vik/keka-automate/releases) page and
-**unzip** it anywhere (Desktop is fine).
+**1 · Download the zip for your OS** and unzip it anywhere (Desktop is fine):
 
-**2 · Double-click the launcher for your OS** (inside the unzipped folder):
+| OS | Zip | Run |
+|----|-----|-----|
+| 🍎 macOS   | `Auto-Keka-macos.zip`   | drag `Auto-Keka.app` to Applications, then open it |
+| 🪟 Windows | `Auto-Keka-windows.zip` | double-click `Auto-Keka.exe` |
+| 🐧 Linux   | `Auto-Keka-linux.zip`   | `chmod +x Auto-Keka && ./Auto-Keka` |
 
-| OS | Double-click |
-|----|--------------|
-| 🍎 macOS   | `Auto-Keka.command` |
-| 🪟 Windows | `Auto-Keka.bat` |
-| 🐧 Linux   | `Auto-Keka.sh` |
-
-- **First run:** a *"Setting up…"* panel appears and quietly downloads the browser
-  + OCR engine it needs (one time). No terminal, no `./setup.sh`.
+- **First run:** the app downloads its private browser engine automatically (one
+  time, ~130 MB), shown live in a *"Setting up…"* panel. The captcha reader
+  (tesseract) comes from your OS — the app tells you the one command if it's
+  missing (**macOS** `brew install tesseract` · **Windows** [UB-Mannheim installer](https://github.com/UB-Mannheim/tesseract) · **Linux** `sudo apt install tesseract-ocr`).
 - **Unknown-developer warning?** The app isn't code-signed, so your OS may warn once:
-  **macOS** → right-click the launcher → *Open* → *Open*. **Windows** → *More info* →
-  *Run anyway*. After that it opens normally.
-- *Want a proper Dock/Start-menu icon?* Run `packaging/build_macos_app.sh`
-  (or `build_linux_app.sh` / `build_windows_app.ps1`) for a named, icon'd app.
+  **macOS** → right-click `Auto-Keka.app` → *Open* → *Open*. **Windows** → *More info*
+  → *Run anyway*. After that it opens normally.
 
-**3 · Follow the wizard** — it walks you through everything, in the window:
+**2 · Follow the wizard** — it walks you through everything, in the window:
 ```
-①  Enter your Keka URL · email · password        →  Continue
-②  It signs you in automatically (solves captcha) →  📧 type the OTP from your email
-③  Pick your clock-in & clock-out times           →  Finish
-④  ✅ Done — the background schedule is armed
+①  Activate your license key                      →  Continue
+②  Enter your Keka URL · email · password         →  Continue
+③  It signs you in automatically (solves captcha) →  📧 type the OTP from your email
+④  Pick your clock-in & clock-out times           →  Finish
+⑤  ✅ Done — the background schedule is armed
 ```
 
 **That's it — it now runs itself.** It clocks you **in and out at your set times,
 Mon–Fri**, in the background — *even when the app window is closed*, and it
 **re-opens automatically when you log into your computer**. Any time, you can also:
 - ☀️ **Clock In** / 🌙 **Clock Out** on demand (it never double-punches)
-- Watch **This Week** + **Activity** to see what it's done
-- Change times / credentials from the **⚙️ gear** (top-right)
+- 🔑 **Sign in again** right on the dashboard when the session expires (the app
+  shows a real *"Session expired"* verdict, not a guess)
+- 📱 **Control it from your phone** — Settings shows a QR code; scan it from an
+  iPhone/Android on the same Wi-Fi to open the full dashboard (status, punch,
+  and the OTP box) in your phone's browser
+- Watch **This Week** (with per-day worked hours) + **Activity** to see what it's done
+- Change times / credentials from the **⚙️ gear** (top-right) — 🌗 the whole UI
+  follows your system light/dark theme
 - **Every ~14 days** an OTP box pops again — enter a fresh code, set for another 2 weeks
 
-> **Prefer the terminal?** You can still run the classic one-shot installer instead
-> of the app: `./setup.sh` (macOS/Linux) or
+> **Developers / running from source:** clone the repo and run the classic
+> one-shot installer instead of the app: `./setup.sh` (macOS/Linux) or
 > `powershell -ExecutionPolicy Bypass -File setup.ps1` (Windows). See
-> **Handy commands** below.
+> **Running from source** and **Handy commands** below.
 
 > **🐧 Linux note:** the OCR engine (tesseract) installs via your package manager,
 > which needs `sudo`. If the in-app setup can't get root, it'll tell you — just run
@@ -129,33 +132,21 @@ you're already clocked in/out, it just shrugs and exits (no double-punching). �
 
 ---
 
-## 🖥️ Desktop app
+## 🖥️ The dashboard
 
-Prefer buttons over a terminal? There's a **native "liquid glass" dashboard**:
-
-```bash
-.venv/bin/python keka_ui.py        # Windows: .venv\Scripts\python keka_ui.py
-```
-
-**Make it a real app (name + icon), per OS** — so it shows as "Auto-Keka" with a
-clock icon instead of "python". Run the packager for your platform once:
-```bash
-bash packaging/build_macos_app.sh                              # 🍎 → Auto-Keka.app (Dock / Applications)
-bash packaging/build_linux_app.sh                              # 🐧 → app-menu entry (.desktop + icon)
-powershell -ExecutionPolicy Bypass -File packaging\build_windows_app.ps1   # 🪟 → Desktop + Start-Menu shortcuts (.ico)
-```
-All three share one icon generator (`packaging/make_icon.py`). The app itself
-runs everywhere regardless (native window, or browser fallback on Linux without
-WebKitGTK).
-
-A real desktop window opens showing:
+A native **"liquid glass"** window (in the released binary it's already the
+whole app; from source it's `keka_ui.py`) showing:
 - ⏱️ **"Am I clocked in?"** hero with a live worked-time timer + workday progress
 - ⏭️ **Next scheduled** punch countdown and a **real session-health verdict** —
   it decodes the saved login token's own expiry (plus a live probe), so
   "Session expired" means expired, and a **Sign in again (OTP)** button appears
   right on the card
-- 🗓️ **This week** clock-in/out strip and a live **activity** feed
-- ☀️🌙 **Clock in / out** buttons and 🔑 **Refresh session**
+- 🗓️ **This week** clock-in/out strip (with per-day worked hours) and a live,
+  scrollable **activity** feed
+- ☀️🌙 **Clock in / out** buttons (with busy states) and 🔑 **Refresh session**
+- 📱 A **Phone remote** QR code in Settings — scan it to drive the whole
+  dashboard from your phone over the LAN (token-protected)
+- 🌗 **Dark mode** that follows your system theme, and native time pickers
 - 🔐 A **Settings** sheet (gear icon) for Keka URL / email / password and
   clock-in / clock-out times
 - When Keka needs the 2FA code, an **OTP box appears right in the app** — read
@@ -165,12 +156,31 @@ A real desktop window opens showing:
 [pywebview](https://pywebview.flowlib.org/) — macOS **WebKit**, Windows
 **WebView2**, Linux **WebKitGTK**. If a machine has no webview backend, it
 automatically **falls back to opening the same dashboard in your default
-browser**, so it works everywhere. Every action is recorded in
-`logs/history.jsonl` so you can see previous sessions.
+browser**, so it works everywhere. On macOS/Windows the app also brands itself
+("Auto-Keka" + icon in the Dock/taskbar, not "python"). Every action is recorded
+in `logs/history.jsonl` so you can see previous sessions.
 
 ---
 
-## 🚀 Setup — one command
+## 📱 Phone remote
+
+The dashboard runs a small token-protected web server on your LAN so you can
+control Auto-Keka from your phone (the automation itself still runs on the
+computer — this is a remote control, which is all iOS allows):
+
+1. On the computer, open **Settings** → **Phone remote**.
+2. Scan the QR code with your phone's camera (phone + computer on the same Wi-Fi).
+3. The full dashboard opens in your phone browser — check status, clock in/out,
+   and **type the ~14-day OTP** without walking back to the computer.
+
+> 🔒 The link carries a private access token; every request needs it. It's plain
+> HTTP on your local network — fine for home/office Wi-Fi; don't port-forward it
+> to the internet (put [Tailscale](https://tailscale.com/) in front if you need
+> access from anywhere). Override the port with `KEKA_REMOTE_PORT`.
+
+---
+
+## 🛠️ Running from source (developers)
 
 Clone the repo, then run the installer for your OS. It does **everything**:
 Python venv, dependencies, Chromium, tesseract (+ desktop packages on Linux),
@@ -348,16 +358,30 @@ python tools/gen_license.py --name "Jane Doe" --email jane@acme.com
 python tools/gen_license.py --name "Trial" --days 14        # time-limited key
 ```
 
-Ship a **compiled** binary (so the check can't be edited out of the source):
+**Cut a release (compiled binaries, all three OSes):** push a version tag and CI
+does the rest — `.github/workflows/release.yml` builds source-hidden **Nuitka**
+binaries (macOS `.app`, Windows `.exe`, Linux onefile), bakes in the app
+name/icon/metadata, and attaches the zips to a GitHub Release. **Source is never
+shipped**, and if no binary compiles the release is refused (nothing leaks).
+```bash
+git tag v1.0.1 && git push origin v1.0.1     # → Release with Auto-Keka-{macos,linux,windows}.zip
+```
+The compiled app is fully self-contained: it punches via `<binary> --punch in|out`,
+schedules itself natively (launchd/cron/Task Scheduler), and downloads Chromium
+through its bundled Playwright driver on first run. To build one locally instead:
 ```bash
 bash packaging/build_binary.sh          # Nuitka onefile for this OS → dist/
 ```
 
 **Before selling, remember:**
-- 🔒 Make the **GitHub repo private** — a public repo already exposes the source,
-  binary or not.
+- 🔒 Keep the **GitHub repo private** — a public repo exposes the source, binary
+  or not. (This repo is private; its Releases are private too, so you deliver the
+  zips through your store rather than linking the Releases page.)
 - 🗝️ **Back up `license_private.pem`.** Lose it and you can't verify sold keys;
   leak it and anyone can mint free ones.
+- ✍️ **Code-sign / notarize** for a clean first launch — the binaries are
+  unsigned, so buyers hit the one-time "unknown developer" prompt (documented in
+  the release notes). Signing needs your Apple Developer / Windows certificates.
 - 🏪 Sell + deliver keys via a store (Gumroad / Lemon Squeezy / Paddle) — they
   handle payment, tax, and key hand-off. Swap to their online key-validation API
   later if you want activation limits.

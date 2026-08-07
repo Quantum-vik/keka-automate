@@ -35,7 +35,11 @@ jobs:
             mode: onefile
             macos_icon: ""
             windows_icon: icon.ico
-          - os: ubuntu-latest
+          # Build on the OLDEST supported runner: Nuitka links against the build
+          # host's glibc, so ubuntu-latest (24.04, glibc 2.39) produced a binary
+          # that failed on Ubuntu 22.04 / Debian 12 with "GLIBC_2.38 not found".
+          # 22.04 (glibc 2.35) covers far more distros.
+          - os: ubuntu-22.04
             name: Auto-Keka-linux
             mode: onefile
             macos_icon: ""
@@ -84,12 +88,12 @@ jobs:
           # so the Dock/taskbar shows "Auto-Keka" before the app even runs.
           # Icon inputs are per-OS (empty ones are omitted by the action).
           macos-app-name: Auto-Keka
-          macos-app-version: 1.0.1
+          macos-app-version: 1.0.2
           macos-app-icon: ${{ matrix.macos_icon }}
           windows-icon-from-ico: ${{ matrix.windows_icon }}
           company-name: Auto-Keka
           product-name: Auto-Keka
-          product-version: 1.0.1
+          product-version: 1.0.2
           file-description: Auto-Keka automatic Keka attendance
 
       - name: Package — macOS (.app)

@@ -120,10 +120,13 @@ def remember_cookie_expiry():
     """Unix ts when Identity.TwoFactorRememberMe expires, or None if absent."""
     if not os.path.exists(kc.SESSION_FILE):
         return None
-    with open(kc.SESSION_FILE, encoding="utf-8") as f:
-        s = json.load(f)
+    try:
+        with open(kc.SESSION_FILE, encoding="utf-8") as f:
+            s = json.load(f)
+    except (OSError, ValueError):
+        return None
     for c in s.get("cookies", []):
-        if c["name"] == "Identity.TwoFactorRememberMe":
+        if c.get("name") == "Identity.TwoFactorRememberMe":
             exp = c.get("expires", -1)
             return exp if exp and exp > 0 else None
     return None
@@ -137,7 +140,7 @@ def launch_setup(log):
         return
     notify("Keka needs a quick re-login — please enter the OTP.")
     proceed = confirm_dialog(
-        "Keka needs a quick re-login to keep auto-attendance working.\\n\\n"
+        "Keka needs a quick re-login to keep auto-attendance working.\n\n"
         "A browser will open — please enter the OTP sent to your email/mobile."
     )
     if not proceed:

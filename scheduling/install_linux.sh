@@ -34,8 +34,12 @@ if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
 fi
 
 # Clock times from .env (KEKA_IN_TIME / KEKA_OUT_TIME, "HH:MM"), default 09:00/18:00.
-IN_TIME=$(grep -E '^KEKA_IN_TIME=' "$KEKA/.env" 2>/dev/null | cut -d= -f2 | tr -d ' \r"')
-OUT_TIME=$(grep -E '^KEKA_OUT_TIME=' "$KEKA/.env" 2>/dev/null | cut -d= -f2 | tr -d ' \r"')
+# The GUI writes these to the per-user data dir (must match keka_common.py
+# DATA_DIR); fall back to a legacy repo-local .env.
+ENV_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/Auto-Keka/.env"
+[ -f "$ENV_FILE" ] || ENV_FILE="$KEKA/.env"
+IN_TIME=$(grep -E '^KEKA_IN_TIME=' "$ENV_FILE" 2>/dev/null | cut -d= -f2 | tr -d ' \r"')
+OUT_TIME=$(grep -E '^KEKA_OUT_TIME=' "$ENV_FILE" 2>/dev/null | cut -d= -f2 | tr -d ' \r"')
 IN_H=$(printf '%s' "${IN_TIME:-09:00}"  | cut -d: -f1 | sed 's/^0//'); IN_H=${IN_H:-0}
 IN_M=$(printf '%s' "${IN_TIME:-09:00}"  | cut -d: -f2 | sed 's/^0*//'); IN_M=${IN_M:-0}
 OUT_H=$(printf '%s' "${OUT_TIME:-18:00}" | cut -d: -f1 | sed 's/^0//'); OUT_H=${OUT_H:-0}

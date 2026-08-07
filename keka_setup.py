@@ -30,7 +30,7 @@ def main():
     log.info("=== Keka session setup started ===")
 
     if not kc.EMAIL or not kc.PASSWORD:
-        log.error("Missing KEKA_EMAIL / KEKA_PASSWORD — set them in %s/.env", kc.SCRIPT_DIR)
+        log.error("Missing KEKA_EMAIL / KEKA_PASSWORD — set them in %s", kc.ENV_FILE)
         sys.exit(1)
 
     with sync_playwright() as p:

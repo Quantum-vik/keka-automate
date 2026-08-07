@@ -20,8 +20,11 @@ if (-not (Test-Path $Py)) {
 }
 
 # Clock times from .env (KEKA_IN_TIME / KEKA_OUT_TIME, "HH:MM"), default 09:00/18:00.
+# The GUI writes these to the per-user data dir (must match keka_common.py
+# DATA_DIR); fall back to a legacy repo-local .env.
 function Get-EnvTime($key, $default) {
-    $envFile = Join-Path $Keka '.env'
+    $envFile = Join-Path $env:APPDATA 'Auto-Keka\.env'
+    if (-not (Test-Path $envFile)) { $envFile = Join-Path $Keka '.env' }
     if (Test-Path $envFile) {
         $line = Select-String -Path $envFile -Pattern "^$key=(.+)$" | Select-Object -First 1
         if ($line) { return $line.Matches[0].Groups[1].Value.Trim() }

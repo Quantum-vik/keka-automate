@@ -53,10 +53,12 @@ jobs:
           script-name: keka_ui.py
           mode: ${{ matrix.mode }}
           include-data-dir: ui=ui
+          # NOTE: no include-package-data for playwright — Nuitka's built-in
+          # playwright config already ships the driver, and adding it again
+          # fatals with a data-file/exe conflict on macOS + Linux.
           include-module: |
             license
             keka_check
-          include-package-data: playwright
           windows-console-mode: disable
 
       - name: Package — macOS (.app)

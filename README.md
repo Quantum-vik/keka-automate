@@ -150,7 +150,10 @@ WebKitGTK).
 
 A real desktop window opens showing:
 - ⏱️ **"Am I clocked in?"** hero with a live worked-time timer + workday progress
-- ⏭️ **Next scheduled** punch countdown and **device-pass** (14-day) health
+- ⏭️ **Next scheduled** punch countdown and a **real session-health verdict** —
+  it decodes the saved login token's own expiry (plus a live probe), so
+  "Session expired" means expired, and a **Sign in again (OTP)** button appears
+  right on the card
 - 🗓️ **This week** clock-in/out strip and a live **activity** feed
 - ☀️🌙 **Clock in / out** buttons and 🔑 **Refresh session**
 - 🔐 A **Settings** sheet (gear icon) for Keka URL / email / password and
@@ -210,17 +213,27 @@ powershell -ExecutionPolicy Bypass -File scheduling\install_windows.ps1  # 🪟 
 </details>
 
 ### 🔐 Your `.env` file
-Create a file named `.env` next to the scripts (it's **git-ignored — never
-uploaded**):
+Your settings live in a **per-user data folder** (so they survive app updates and
+compiled builds — see `.env.example` in the repo for the full template):
+
+| OS | Location |
+|----|----------|
+| 🍎 macOS   | `~/Library/Application Support/Auto-Keka/.env` |
+| 🐧 Linux   | `~/.local/share/Auto-Keka/.env` |
+| 🪟 Windows | `%APPDATA%\Auto-Keka\.env` |
 
 ```ini
 KEKA_BASE_URL=https://your-company.keka.com
 KEKA_EMAIL=you@company.com
 KEKA_PASSWORD=your-password
+KEKA_IN_TIME=09:00
+KEKA_OUT_TIME=18:00
 ```
 
-> 💡 `KEKA_BASE_URL` is just your company's Keka web address. On macOS/Linux, lock
-> the file down with `chmod 600 .env` so only you can read it.
+> 💡 The app's **Settings sheet** and the installers write this file for you — you
+> only edit it by hand for headless setups. It's created `chmod 600` (owner-only)
+> and **never uploaded anywhere**. A legacy `.env` next to the scripts is
+> auto-migrated on first run.
 
 ---
 
@@ -230,8 +243,8 @@ Same three jobs on every OS (set up by the installer for your platform):
 
 | Job | When | What it does |
 |-----|------|--------------|
-| ☀️ Punch in  | 9:00 AM, Mon–Fri | Clock in |
-| 🌙 Punch out | 6:00 PM, Mon–Fri | Clock out |
+| ☀️ Punch in  | Your `KEKA_IN_TIME` (default 9:00 AM), Mon–Fri | Clock in |
+| 🌙 Punch out | Your `KEKA_OUT_TIME` (default 6:00 PM), Mon–Fri | Clock out |
 | 🐕 Watchdog  | 10:00 AM daily + at login | Only bugs you if the ~14-day pass is about to expire |
 
 **Under the hood, per OS:**
@@ -251,6 +264,7 @@ Same three jobs on every OS (set up by the installer for your platform):
 
 **Run something right now (test it):**
 ```bash
+.venv/bin/python keka_doctor.py       # 🩺 health check: deps, config, session token, schedule
 .venv/bin/python keka_punch_in.py     # clock in now   (Windows: .venv\Scripts\python)
 .venv/bin/python keka_punch_out.py    # clock out now
 .venv/bin/python keka_setup.py        # force a fresh OTP login
@@ -296,9 +310,12 @@ keka_setup.py          🪪  one-time login + OTP → saves session
 keka_punch_in.py       ☀️  clock in
 keka_punch_out.py      🌙  clock out
 keka_check.py          🐕  reauth watchdog
-keka_common.py         🧠  shared logic (login, captcha OCR, session, deps, autostart)
+keka_common.py         🧠  shared logic (login, captcha OCR, session health, deps, autostart)
+keka_doctor.py         🩺  one-shot health check (deps, config, session token, schedule)
 ui/index.html          🎨  the glass dashboard + setup/wizard overlays
-requirements.txt       📦  Python dependencies
+tests/                 🧪  pytest unit suite (session health, env, history, license)
+requirements.txt       📦  Python dependencies (+ requirements-dev.txt for tests)
+.env.example           📋  template of every config key (real .env lives in the data dir)
 packaging/             📦  build the clickable app (name + icon) per OS
 scheduling/            ⏰  install_macos.sh · install_linux.sh · install_windows.ps1
 .github/workflows/     🧪  CI — tests installers + OCR on macOS/Linux/Windows
@@ -357,10 +374,17 @@ CI (`.github/workflows/ci.yml`) runs on every push across **three real OSes**:
 - **powershell** (windows) — parse-check, PSScriptAnalyzer, and a live
   `Register-ScheduledTask` cmdlet check (paths-with-spaces safe).
 
-Run the Python checks locally:
+- **unit tests** (all three OSes) — `pytest` suite in `tests/`: session-health
+  token decoding, `.env` parsing/merging, history log, license signature
+  verification (forgery/expiry/tamper), and the watchdog + UI helpers.
+
+Run the checks locally:
 ```bash
-.venv/bin/python -m py_compile *.py
-.venv/bin/python .github/scripts/smoke.py
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m pytest tests/ -q              # unit tests
+.venv/bin/python -m py_compile *.py               # syntax
+.venv/bin/python .github/scripts/smoke.py         # OCR + env smoke
+.venv/bin/python keka_doctor.py                   # live installation health
 ```
 
 ---

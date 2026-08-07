@@ -33,11 +33,19 @@ print("_has_display :", disp)
 if sys.platform.startswith("linux") and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
     assert disp is False, "headless Linux should report no display"
 
-# 4) BOM-safe .env parsing (Windows editors/PowerShell add a UTF-8 BOM)
-bom_env = os.path.join(kc.SCRIPT_DIR, ".env")
+# 4) BOM-safe .env parsing (Windows editors/PowerShell add a UTF-8 BOM).
+# _load_env reads kc.ENV_FILE (the per-user data dir) — point it at a scratch
+# file so this never touches a real user's config when run locally.
+import tempfile
+bom_env = os.path.join(tempfile.mkdtemp(prefix="keka_smoke_"), ".env")
 with io.open(bom_env, "w", encoding="utf-8-sig") as f:
     f.write("KEKA_BASE_URL=https://bom.keka.com\nKEKA_EMAIL=b@e.com\nKEKA_PASSWORD=p\n")
-parsed = kc._load_env()
+_orig_env_file = kc.ENV_FILE
+kc.ENV_FILE = bom_env
+try:
+    parsed = kc._load_env()
+finally:
+    kc.ENV_FILE = _orig_env_file
 assert parsed.get("KEKA_BASE_URL") == "https://bom.keka.com", f"BOM parse failed: {parsed}"
 print("BOM .env parse: OK")
 

@@ -57,6 +57,19 @@ jobs:
         shell: pwsh
         run: .\.venv\Scripts\python.exe .github\scripts\smoke.py
 
+      - name: Unit tests — Unix
+        if: runner.os != 'Windows'
+        run: |
+          ./.venv/bin/python -m pip install --quiet -r requirements-dev.txt
+          ./.venv/bin/python -m pytest tests/ -q
+
+      - name: Unit tests — Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\python.exe -m pip install --quiet -r requirements-dev.txt
+          .\.venv\Scripts\python.exe -m pytest tests/ -q
+
   # ── Bash lint for the Unix installers ────────────────────────────────────────
   shell-lint:
     name: shell-lint

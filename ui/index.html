@@ -81,6 +81,11 @@
     box-shadow:0 6px 20px rgba(6,60,50,.10), inset 0 1px 0 rgba(255,255,255,.6); transition:background .15s ease; }
   .btn:hover { background:rgba(255,255,255,.82); }
   .btn:active { transform:translateY(1px); }
+  .actions.busy .btn { pointer-events:none; }
+  .actions.busy .btn:not(.working) { opacity:.45; }
+  .btn.working { background:rgba(255,255,255,.9); }
+  .btn.working i { animation:pulse 1.2s ease-in-out infinite; }
+  .btn.working span { color:var(--teal-600); }
   .btn i { width:9px; height:9px; border-radius:50%; }
   .btn span { font-size:14px; font-weight:600; color:var(--ink); }
 
@@ -146,9 +151,13 @@
   .field.times { flex-direction:row; gap:12px; }
   .field.times > div { flex:1; min-width:0; display:flex; flex-direction:column; gap:5px; }
   .field.times input { font-family:var(--mono); letter-spacing:.05em; }
+  input[type="time"] { font-family:var(--mono); letter-spacing:.05em; cursor:pointer; }
+  input[type="time"]::-webkit-calendar-picker-indicator { opacity:.55; cursor:pointer; }
+  input[type="time"]::-webkit-datetime-edit { color:var(--ink); }
   .save { height:40px; padding:0 16px; border:none; border-radius:11px; background:var(--teal-600); color:#fff;
     font-weight:600; font-size:13.5px; cursor:pointer; align-self:flex-end; margin-top:4px; }
   .save:hover { background:var(--teal-500); }
+  .save:disabled { opacity:.55; cursor:default; }
   .saved-tag { font-size:12px; font-weight:600; color:var(--present); opacity:0; transition:opacity .2s; }
   .saved-tag.on { opacity:1; }
   /* account: configured summary */
@@ -272,6 +281,7 @@
           <div class="big" id="sessDays" style="white-space:nowrap">—</div>
           <div class="meta" id="sessExpiry">—</div>
           <div class="bar"><i id="sessBar" style="width:0%"></i></div>
+          <button class="save" id="reloginBtn" style="display:none;width:100%;margin-top:14px">Sign in again (OTP)</button>
         </div>
       </div>
 
@@ -327,8 +337,8 @@
         <div class="sect">
           <span class="kicker">Schedule (Mon–Fri)</span>
           <div class="field times">
-            <div><label>Clock-in time</label><input id="cfgIn" placeholder="09:00" maxlength="5" /></div>
-            <div><label>Clock-out time</label><input id="cfgOut" placeholder="18:00" maxlength="5" /></div>
+            <div><label>Clock-in time</label><input id="cfgIn" type="time" step="60" value="09:00" /></div>
+            <div><label>Clock-out time</label><input id="cfgOut" type="time" step="60" value="18:00" /></div>
           </div>
           <div style="display:flex; align-items:center; justify-content:flex-end; gap:12px;">
             <span class="saved-tag" id="savedSched">Applied ✓</span>
@@ -390,9 +400,9 @@
             automatically, Monday to Friday — even when this app is closed.</p>
           <div class="wrow">
             <div class="wfield mono"><label>Clock-in time</label>
-              <input id="wIn" placeholder="09:00" maxlength="5" /></div>
+              <input id="wIn" type="time" step="60" value="09:00" /></div>
             <div class="wfield mono"><label>Clock-out time</label>
-              <input id="wOut" placeholder="18:00" maxlength="5" /></div>
+              <input id="wOut" type="time" step="60" value="18:00" /></div>
           </div>
           <div class="werr" id="wSchedErr"></div>
           <button class="wbtn" id="wFinishBtn">Finish setup</button>
@@ -448,6 +458,7 @@ const MOCK = {
   scheduleIn:  "09:00",
   scheduleOut: "18:00",
   sessionDaysLeft: 9,                     // from Identity.TwoFactorRememberMe cookie
+  sessionAlive: true,                     // real verdict: true | false | null (unknown)
   week: [
     // filled by buildMockWeek() below
   ],
@@ -491,8 +502,10 @@ async function load() {
 }
 function normalize(s) {
   s = s || {};
-  if (!s.week || !s.week.length) s.week = buildMockWeek();
-  if (!s.activity) s.activity = MOCK.activity.slice();
+  // Mock filler is for the bridgeless design preview ONLY — with a real
+  // backend, missing data must render as empty, never as fake numbers.
+  if (!s.week || !s.week.length) s.week = hasBridge() ? [] : buildMockWeek();
+  if (!s.activity) s.activity = hasBridge() ? [] : MOCK.activity.slice();
   // Browser preview (no bridge) has no deps/onboarding info → show the dashboard.
   if (s.depsReady === undefined) s.depsReady = true;
   if (s.onboarded === undefined) s.onboarded = true;
@@ -511,69 +524,117 @@ function render() {
   const cOut    = schedAt(sOut);
   const cIn  = STATE.clockInAt || startIn;
 
+  // Session health verdict from the backend: true = verified alive (live probe
+  // or an unexpired token), false = expired, null/undefined = not yet known.
+  const dead = STATE.sessionAlive === false;
+  const live = clockedIn && !dead;   // "clocked in" is only trustworthy while the session is
+
   // hero
-  $("#statusDot").style.background = clockedIn ? "var(--present)" : "var(--out)";
-  $("#statusText").textContent = clockedIn ? "You're clocked in" : "You're clocked out";
+  $("#statusDot").style.background = live ? "var(--present)" : "var(--out)";
+  $("#statusText").textContent = dead ? "Session expired" : clockedIn ? "You're clocked in" : "You're clocked out";
   $("#dateText").textContent = new Date(now).toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});
-  const worked = (clockedIn ? now : (STATE.clockOutAt || cOut)) - cIn;
+  // On a dead session the timer must FREEZE (we can't know the real state), not keep counting.
+  const worked = (live ? now : (STATE.clockOutAt || Math.min(now, cOut))) - cIn;
   $("#timer").textContent = fmtDur(worked);
-  $("#punchLine").textContent = clockedIn
+  $("#punchLine").textContent = dead
+    ? "Signed-in session expired — use “Sign in again” on the Device pass card"
+    : clockedIn
     ? `Clocked in at ${fmtHM(new Date(cIn))} · by automation`
     : `Clocked out at ${fmtHM(new Date(STATE.clockOutAt||cOut))} · ${fmtDur((STATE.clockOutAt||cOut)-cIn)} total`;
-  $("#workBar").style.width = (clockedIn ? clamp((now-startIn)/(cOut-startIn)*100,0,100) : 100).toFixed(1) + "%";
+  $("#workBar").style.width = (live ? clamp((now-startIn)/(cOut-startIn)*100,0,100) : 100).toFixed(1) + "%";
   $("#inLabel").textContent  = fmtSched(sIn);
   $("#outLabel").textContent = fmtSched(sOut);
 
-  // next scheduled — uses your saved times
-  const nextIsOut = clockedIn;
-  const inTomorrow = now > startIn ? 1 : 0;
-  const target = nextIsOut ? cOut : schedAt(sIn, inTomorrow);
+  // next scheduled — uses your saved times; past targets roll to the next workday
+  let nextIsOut, target, when;
+  if (live && now < cOut)            { nextIsOut = true;  target = cOut;    when = `Today · ${fmtSched(sOut)}`; }
+  else if (live)                     { nextIsOut = true;  target = cOut;    when = `Overdue · was ${fmtSched(sOut)}`; }
+  else if (now < startIn)            { nextIsOut = false; target = startIn; when = `Today · ${fmtSched(sIn)}`; }
+  else { const d = nextWorkday(sIn);   nextIsOut = false; target = d.getTime(); when = `${dayLabel(d)} · ${fmtSched(sIn)}`; }
   $("#nextDot").style.background = nextIsOut ? "var(--out)" : "var(--present)";
   $("#nextLabel").textContent = nextIsOut ? "Auto clock-out" : "Auto clock-in";
-  $("#nextTime").textContent  = nextIsOut
-    ? `Today · ${fmtSched(sOut)}`
-    : `${inTomorrow ? "Tomorrow" : "Today"} · ${fmtSched(sIn)}`;
+  $("#nextTime").textContent  = when;
   $("#countdown").textContent = fmtCountdown(target - now);
 
-  // session
-  const days = STATE.sessionDaysLeft ?? 9;
-  const low = days <= 3;
-  const expiry = new Date(); expiry.setDate(expiry.getDate() + days);
+  // session health card — driven by the real token/probe verdict, not a timer
+  const days = STATE.sessionDaysLeft ?? 0;
+  const low = dead || days <= 3;
   $("#sessDot").style.background = low ? "var(--out)" : "var(--present)";
-  $("#sessDays").textContent = `${days} of 14 days left`;
-  $("#sessExpiry").textContent = `Re-auth by ${expiry.toLocaleDateString("en-US",{month:"short",day:"numeric"})}`;
-  $("#sessBar").style.width = (days/14*100) + "%";
   $("#sessBar").style.background = low ? "linear-gradient(90deg,#f0a04a,#e8933c)" : "var(--teal-grad)";
+  $("#reloginBtn").style.display = dead ? "block" : "none";
+  if (dead) {
+    $("#sessDays").textContent = "Session expired";
+    $("#sessExpiry").textContent = "Sign in again to resume automation";
+    $("#sessBar").style.width = "0%";
+  } else {
+    const expiry = new Date(); expiry.setDate(expiry.getDate() + days);
+    const verified = STATE.sessionAlive === true ? " · verified" : "";
+    $("#sessDays").textContent = `${days} of 14 days left`;
+    $("#sessExpiry").textContent = `Re-auth by ${expiry.toLocaleDateString("en-US",{month:"short",day:"numeric"})}${verified}`;
+    $("#sessBar").style.width = (days/14*100) + "%";
+  }
 
   renderWeek(STATE.week);
   renderFeed(STATE.activity);
   applyGates();
 }
 
+function esc(s){ return String(s??"").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function renderWeek(week) {
   $("#week").innerHTML = week.map(d => `
     <div class="day${d.today ? " today":""}">
-      <div class="d">${d.day}</div><div class="dt">${d.date}</div>
-      <div class="row${d.dim?" dim":""}"><i style="background:var(--present)"></i><span>${d.in||"—"}</span></div>
-      <div class="row${d.dim?" dim":""}"><i style="background:var(--out)"></i><span>${d.out||"—"}</span></div>
+      <div class="d">${esc(d.day)}</div><div class="dt">${esc(d.date)}</div>
+      <div class="row${d.dim?" dim":""}"><i style="background:var(--present)"></i><span>${esc(d.in||"—")}</span></div>
+      <div class="row${d.dim?" dim":""}"><i style="background:var(--out)"></i><span>${esc(d.out||"—")}</span></div>
     </div>`).join("");
 }
 function renderFeed(items) {
   const color = k => k==="in" ? "var(--present)" : k==="out" ? "var(--out)" : "var(--teal-500)";
   $("#feed").innerHTML = items.slice(0,5).map(a => `
-    <div class="item"><i style="background:${color(a.kind)}"></i><span class="t">${a.time}</span><span class="m">${a.msg}</span></div>`).join("");
+    <div class="item"><i style="background:${color(a.kind)}"></i><span class="t">${esc(a.time)}</span><span class="m">${esc(a.msg)}</span></div>`).join("");
 }
 function pushActivity(entry) {
+  if (!STATE) return;   // a log can arrive before the first state load
   STATE.activity = [entry, ...(STATE.activity||[])].slice(0,5);
   renderFeed(STATE.activity);
 }
 
-/* ── actions ────────────────────────────────────────────────────────────── */
+/* ── actions ──────────────────────────────────────────────────────────────
+   A punch/refresh drives a real headless browser and takes 30–60s — without
+   a busy state the buttons feel dead. Lock the row, animate the clicked one,
+   and drop an activity line immediately so the click is visibly doing work. */
+let _actionBusy = false;
+function setActionsBusy(btn, label){
+  $(".actions").classList.add("busy");
+  btn.classList.add("working");
+  const s = btn.querySelector("span");
+  s.dataset.orig = s.textContent;
+  s.textContent = label;
+}
+function clearActionsBusy(){
+  $(".actions").classList.remove("busy");
+  const w = document.querySelector(".btn.working");
+  if (w){ const s = w.querySelector("span"); s.textContent = s.dataset.orig || s.textContent; w.classList.remove("working"); }
+}
 document.querySelectorAll(".btn").forEach(b => b.addEventListener("click", async () => {
+  if (_actionBusy) return;
   const a = b.dataset.action;
-  if (a === "clockIn")  { const r = await api.clockIn();  afterPunch(r, "in"); }
-  if (a === "clockOut") { const r = await api.clockOut(); afterPunch(r, "out"); }
-  if (a === "refresh")  { const r = await api.refresh();  toastRefresh(r); }
+  const busyLabel = { clockIn: "Clocking in…", clockOut: "Clocking out…", refresh: "Refreshing…" }[a];
+  const startMsg  = { clockIn: "Clocking in — talking to Keka…",
+                      clockOut: "Clocking out — talking to Keka…",
+                      refresh: "Refreshing session — talking to Keka…" }[a];
+  _actionBusy = true;
+  setActionsBusy(b, busyLabel);
+  pushActivity({ time: hm(), msg: startMsg, kind: "info" });
+  try {
+    if (a === "clockIn")  { const r = await api.clockIn();  afterPunch(r, "in"); }
+    if (a === "clockOut") { const r = await api.clockOut(); afterPunch(r, "out"); }
+    if (a === "refresh")  { const r = await api.refresh();  toastRefresh(r); }
+    await load();                       // pull fresh state once the action lands
+  } finally {
+    _actionBusy = false;
+    clearActionsBusy();
+  }
 }));
 function afterPunch(res, action) {
   if (!hasBridge()) {                              // browser demo: mutate locally
@@ -590,6 +651,24 @@ function toastRefresh(res) {
   const msg = (res && res.message) || "Session refreshed — device pass valid 14 days";
   pushActivity({ time: hm(), msg, kind: "info" });
 }
+
+/* re-login button (shown on the Device pass card while the session is dead) —
+   same flow as Refresh: headless login, OTP typed into the app when prompted */
+let _relogging = false;
+$("#reloginBtn").addEventListener("click", async () => {
+  if (_relogging) return;
+  _relogging = true;
+  const b = $("#reloginBtn");
+  b.disabled = true; b.textContent = "Signing in… check for the OTP prompt";
+  try {
+    const r = await api.refresh();
+    toastRefresh(r);
+    await load();                       // re-pull state so the card flips to alive
+  } finally {
+    _relogging = false;
+    b.disabled = false; b.textContent = "Sign in again (OTP)";
+  }
+});
 
 /* ── OTP ────────────────────────────────────────────────────────────────── */
 function showOtp(retry){ $("#otp").classList.add("show"); $("#otpInput").value=""; $("#otpInput").focus();
@@ -614,6 +693,9 @@ function hm(){ return fmtHM(new Date(vnow())).replace(/ ..$/,""); }
 function fmtDur(ms){ ms=Math.max(0,ms); const s=Math.floor(ms/1000); return `${pad(Math.floor(s/3600))}:${pad(Math.floor(s%3600/60))}:${pad(s%60)}`; }
 function fmtCountdown(ms){ ms=Math.max(0,ms); const t=Math.floor(ms/60000), h=Math.floor(t/60), m=t%60; return h>0?`${h}h ${pad(m)}m`:`${m}m`; }
 function nextMorning(cIn){ const d=todayAt(9,0); if(Date.now()>cIn) d.setDate(d.getDate()+1); return d.getTime(); }
+function nextWorkday(hhmm){ const d=new Date(schedAt(hhmm,1)); while(d.getDay()===0||d.getDay()===6) d.setDate(d.getDate()+1); return d; }
+function dayLabel(d){ const t=new Date(); t.setDate(t.getDate()+1);
+  return d.toDateString()===t.toDateString() ? "Tomorrow" : d.toLocaleDateString("en-US",{weekday:"long"}); }
 
 function buildMockWeek(){
   const now=new Date(), dow=(now.getDay()+6)%7, mon=new Date(now); mon.setDate(now.getDate()-dow); mon.setHours(0,0,0,0);
@@ -673,8 +755,8 @@ function wizGoto(step) {
     $("#wEmail").value = (STATE && STATE.config && STATE.config.email) || "";
   }
   if (step === "schedule") {
-    $("#wIn").value  = (STATE && STATE.scheduleIn)  || "09:00";
-    $("#wOut").value = (STATE && STATE.scheduleOut) || "18:00";
+    $("#wIn").value  = toHHMM(STATE && STATE.scheduleIn,  "09:00");
+    $("#wOut").value = toHHMM(STATE && STATE.scheduleOut, "18:00");
   }
 }
 async function wizAccount() {
@@ -755,13 +837,16 @@ function showEdit(cfg){
 }
 function openSettings(){
   accountView();
-  $("#cfgIn").value    = (STATE && STATE.scheduleIn)  || "09:00";
-  $("#cfgOut").value   = (STATE && STATE.scheduleOut) || "18:00";
+  $("#cfgIn").value    = toHHMM(STATE && STATE.scheduleIn,  "09:00");
+  $("#cfgOut").value   = toHHMM(STATE && STATE.scheduleOut, "18:00");
   $("#settings").classList.add("show");
 }
 function closeSettings(){ $("#settings").classList.remove("show"); }
 function flashTag(id){ const t=$(id); t.classList.add("on"); setTimeout(()=>t.classList.remove("on"), 1800); }
 const validTime = s => /^([01]?\d|2[0-3]):[0-5]\d$/.test((s||"").trim());
+/* time inputs only accept a strict HH:MM value — pad legacy values like "9:00" */
+function toHHMM(s, fallback){ const m=/^(\d{1,2}):(\d{2})$/.exec((s||"").trim());
+  return m ? `${pad(+m[1])}:${m[2]}` : fallback; }
 
 $("#gear").addEventListener("click", openSettings);
 $("#settingsClose").addEventListener("click", closeSettings);
@@ -791,9 +876,16 @@ $("#saveSched").addEventListener("click", async () => {
   pushActivity({ time: hm(), msg: `Schedule set · in ${inT}, out ${outT}`, kind: "info" });
 });
 
-load();
+/* pywebview injects window.pywebview AFTER the page's scripts run — loading
+   immediately would render the mock preview and permanently skip the 30s
+   real-state re-poll (the old bridge check ran too early). Boot on the
+   bridge-ready event; fall back to preview mode only if no bridge appears. */
+let _loadTimer = null;
+function boot(){ load(); if (!_loadTimer) _loadTimer = setInterval(load, 30000); }
+window.addEventListener("pywebviewready", boot);
+if (hasBridge()) boot();                                    // browser-fallback shim is ready at once
+else setTimeout(() => { if (!_loadTimer) boot(); }, 1200);  // plain-file design preview
 setInterval(render, 1000);                 // live timer + countdown
-if (hasBridge()) setInterval(load, 30000); // re-pull real state every 30s
 </script>
 </body>
 </html>

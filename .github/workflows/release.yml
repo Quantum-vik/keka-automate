@@ -64,8 +64,25 @@ jobs:
           name: ${{ matrix.name }}
           path: out/${{ matrix.name }}.zip
 
+  # The documented install flow (README + release notes) is the SOURCE zip with
+  # the double-click launchers — this job guarantees it exists on every release.
+  # git archive packs TRACKED files only, so .env/session/keys can never leak.
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build source zip
+        run: git archive --format=zip --prefix=Auto-Keka/ -o Auto-Keka.zip HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Auto-Keka-source
+          path: Auto-Keka.zip
+
   release:
-    needs: build
+    needs: [build, source]
+    # Publish even if the (experimental) compiled builds fail — the source zip
+    # is the primary download and must always ship.
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -76,8 +93,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" artifacts/*/*.zip \
+          shopt -s nullglob
+          files=(artifacts/*/*.zip)
+          [ ${#files[@]} -gt 0 ] || { echo "no artifacts produced"; exit 1; }
+          gh release create "${GITHUB_REF_NAME}" "${files[@]}" \
             --repo "${GITHUB_REPOSITORY}" \
             --title "Auto-Keka ${GITHUB_REF_NAME}" \
             --notes-file .github/release-notes.md || \
-          gh release upload "${GITHUB_REF_NAME}" artifacts/*/*.zip --repo "${GITHUB_REPOSITORY}"
+          gh release upload "${GITHUB_REF_NAME}" "${files[@]}" --repo "${GITHUB_REPOSITORY}"

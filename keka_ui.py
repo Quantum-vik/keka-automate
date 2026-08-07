@@ -48,6 +48,16 @@ class Backend:
         self.log.handlers = [logging.NullHandler()]
         self._status = self._status_from_history()
         threading.Thread(target=self._status_refresher, daemon=True).start()
+        # Existing installs (onboarded before app-wrapping existed) self-heal:
+        # quietly install the native wrapper + repoint autostart at it.
+        if kc.is_onboarded() and not kc.desktop_app_installed():
+            threading.Thread(target=self._ensure_desktop_app, daemon=True).start()
+
+    def _ensure_desktop_app(self):
+        if kc.install_desktop_app():
+            kc.install_autostart()
+            self.push_log("Installed the Auto-Keka desktop app — launch it "
+                          "from Applications from now on")
 
     # push helpers
     def push_log(self, msg, kind="info"):
@@ -94,8 +104,9 @@ class Backend:
         alive = self._alive if self._alive is not None else health["alive"]
         hist = kc.read_history(200)
         cin, cout = self._today_punches(hist)
-        activity = [{"time": h["time"], "msg": h["msg"], "kind": h["kind"]}
-                    for h in reversed(hist)][:5]
+        activity = [{"time": h["time"], "msg": h["msg"], "kind": h["kind"],
+                     "date": h.get("date")}
+                    for h in reversed(hist)][:12]
         configured = bool(env.get("KEKA_EMAIL") and env.get("KEKA_PASSWORD"))
         # Treat existing users (already configured + a saved session) as onboarded
         # so the first-run wizard never re-appears for them.
@@ -149,6 +160,23 @@ class Backend:
                               "or run setup in a terminal.", "out")
             return {"ok": rc == 0 and ready, "ready": ready}
 
+    def remote_info(self):
+        """URL + QR for the phone remote (empty when the server isn't up)."""
+        url = _REMOTE.get("url")
+        if not url:
+            return {"enabled": False}
+        qr = None
+        try:
+            import io
+            import base64
+            import qrcode
+            buf = io.BytesIO()
+            qrcode.make(url).save(buf, format="PNG")
+            qr = base64.b64encode(buf.getvalue()).decode()
+        except Exception:
+            pass                     # no qrcode lib — the URL alone still works
+        return {"enabled": True, "url": url, "qr": qr}
+
     def activate_license(self, key):
         """Validate + store a license key. Returns {ok, name|message}."""
         info = lic.verify_key(key or "")
@@ -160,8 +188,12 @@ class Backend:
         return {"ok": False, "message": "Invalid or expired license key"}
 
     def finish_onboarding(self):
-        """Mark first-run complete and register the app to open at login."""
+        """Mark first-run complete, install the native app wrapper (so future
+        launches are 'Auto-Keka' with an icon, not a python file), and register
+        it to open at login. Order matters: the macOS autostart prefers the
+        installed bundle."""
         kc.mark_onboarded()
+        kc.install_desktop_app()
         auto = kc.install_autostart()
         kc.log_history("info", "Setup finished — automation armed")
         self.push_state()
@@ -316,6 +348,70 @@ class Backend:
                 if ok else "Punch failed — check credentials")}
 
 
+# ─── App identity (macOS Dock name + icon) ────────────────────────────────────
+def _app_icon_path():
+    """PNG icon for the runtime Dock tile; generated once into the data dir."""
+    p = os.path.join(kc.DATA_DIR, "icon.png")
+    if not os.path.exists(p):
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "_make_icon", os.path.join(kc.SCRIPT_DIR, "packaging", "make_icon.py"))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            mod.make(512).save(p)
+        except Exception:
+            return None
+    return p
+
+
+def _macos_app_identity():
+    """Brand the running process as 'Auto-Keka' with our icon.
+
+    macOS attributes a GUI process to the bundle owning its EXECUTABLE — for a
+    script launch that's the Python framework's internal Python.app, so the
+    Dock shows 'python3.13' with a blank icon. Rewriting the main bundle's
+    in-memory name fixes the menu bar; setApplicationIconImage fixes the Dock
+    tile. (The Dock LABEL is fully correct when launched via Auto-Keka.app.)
+    """
+    if sys.platform != "darwin":
+        return
+    try:
+        from Foundation import NSBundle
+        from AppKit import NSApplication, NSImage
+        bundle = NSBundle.mainBundle()
+        info = bundle.localizedInfoDictionary() or bundle.infoDictionary()
+        if info is not None:
+            info["CFBundleName"] = "Auto-Keka"
+            info["CFBundleDisplayName"] = "Auto-Keka"
+        icon = _app_icon_path()
+        if icon:
+            img = NSImage.alloc().initWithContentsOfFile_(icon)
+            if img:
+                NSApplication.sharedApplication().setApplicationIconImage_(img)
+    except Exception:
+        pass   # cosmetic only — never block the app on it
+
+
+def _platform_app_identity():
+    """Per-OS process branding so the taskbar/Dock never says 'python'."""
+    _macos_app_identity()
+    if sys.platform.startswith("win"):
+        try:
+            import ctypes
+            # Detach from python.exe's taskbar group; pairs with the shortcut
+            # so the taskbar shows Auto-Keka's own icon and name.
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("com.keka.autokeka")
+        except Exception:
+            pass
+    elif sys.platform.startswith("linux"):
+        try:
+            from gi.repository import GLib
+            GLib.set_prgname("Auto-Keka")   # matches StartupWMClass in .desktop
+        except Exception:
+            pass
+
+
 # ─── Native window (pywebview) ────────────────────────────────────────────────
 def _push_native(window, obj):
     t = obj.get("type")
@@ -349,6 +445,7 @@ class Api:
     def install_deps(self):     return self._b.install_deps()
     def finish_onboarding(self): return self._b.finish_onboarding()
     def activate_license(self, key): return self._b.activate_license(key)
+    def remote_info(self):      return self._b.remote_info()
 
     # frameless-window controls (the design draws its own traffic lights)
     def win_close(self):
@@ -365,13 +462,28 @@ class Api:
 
 def run_native():
     import webview  # raises if pywebview missing
+    _platform_app_identity()
     backend = Backend()
+    remote_broadcast = start_remote_server(backend)   # phone remote on the LAN
+    bg = "#eef4f2"
+    if sys.platform == "darwin":
+        try:      # match the pre-load window color to the system theme
+            r = subprocess.run(["defaults", "read", "-g", "AppleInterfaceStyle"],
+                               capture_output=True, text=True)
+            if "Dark" in (r.stdout or ""):
+                bg = "#101b18"
+        except Exception:
+            pass
     window = webview.create_window(
         "Auto-Keka", url=UI_HTML, js_api=Api(backend),
-        width=860, height=760, min_size=(560, 640), background_color="#eef4f2",
+        width=860, height=760, min_size=(560, 640), background_color=bg,
         frameless=True, easy_drag=False,   # design supplies its own title bar
     )
-    backend.emit = lambda obj: _push_native(window, obj)
+    def emit(obj):
+        _push_native(window, obj)
+        if remote_broadcast:
+            remote_broadcast(obj)          # phones see the same live events
+    backend.emit = emit
     webview.start()          # blocks; must be on the main thread
 
 
@@ -379,6 +491,7 @@ def run_native():
 _SHIM = """
 <script>
 (function(){
+  window.KEKA_REMOTE = true;   // page adapts: no fake window chrome, phone layout
   const j=(r)=>r.json();
   const post=(p,b)=>fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})}).then(j);
   window.pywebview={api:{
@@ -387,7 +500,7 @@ _SHIM = """
     refresh_session:()=>post('/api/refresh'), submit_otp:(c)=>post('/api/submit_otp',{code:c}),
     save_creds:(o)=>post('/api/save_creds',o), apply_schedule:(o)=>post('/api/apply_schedule',o),
     install_deps:()=>post('/api/install_deps'), finish_onboarding:()=>post('/api/finish_onboarding'),
-    activate_license:(k)=>post('/api/activate_license',{key:k})}};
+    activate_license:(k)=>post('/api/activate_license',{key:k}), remote_info:()=>post('/api/remote_info')}};
   try{const es=new EventSource('/events');es.onmessage=(e)=>{const m=JSON.parse(e.data),K=window.KekaUI||{};
     if(m.type==='log'&&K.onLog)K.onLog(m.entry);else if(m.type==='state'&&K.onState)K.onState(m.state);
     else if(m.type==='otp'&&K.onOtpRequired)K.onOtpRequired(m.retry);else if(m.type==='otpDone'&&K.onOtpDone)K.onOtpDone();};}catch(_){}
@@ -396,36 +509,64 @@ _SHIM = """
 """
 
 
-def run_browser():
-    import webbrowser
+def _serve_http(backend, host, port, token):
+    """Shared dashboard HTTP/SSE server. With a token, every request must carry
+    it (?t= query on first open, then a cookie) — this is what makes the LAN
+    phone remote safe to expose beyond loopback.
+    Returns (httpd, broadcast, actual_port); caller runs httpd.serve_forever()."""
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-    backend = Backend()
-    subs, sub_lock = [], threading.Lock()
-
-    def emit(obj):
-        with sub_lock:
-            for q in list(subs):
-                q.put(obj)
-    backend.emit = emit
+    from urllib.parse import urlparse, parse_qs
 
     with open(UI_HTML, encoding="utf-8") as f:
         html = f.read().replace("<script>", _SHIM + "<script>", 1).encode("utf-8")
 
+    subs, sub_lock = [], threading.Lock()
+
+    def broadcast(obj):
+        with sub_lock:
+            for q in list(subs):
+                q.put(obj)
+
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a): pass
+        def _authed(self):
+            if not token:
+                return True
+            if token in parse_qs(urlparse(self.path).query).get("t", []):
+                return True
+            cookies = (self.headers.get("Cookie") or "").replace(" ", "")
+            return f"kt={token}" in cookies
         def _json(self, obj, code=200):
             body = json.dumps(obj).encode(); self.send_response(code)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body))); self.end_headers()
             self.wfile.write(body)
         def do_GET(self):
-            if self.path in ("/", "/index.html"):
+            route = urlparse(self.path).path
+            if route == "/icon.png":   # just the logo — public so iOS can fetch
+                p = _app_icon_path()
+                if p and os.path.exists(p):
+                    with open(p, "rb") as f:
+                        data = f.read()
+                    self.send_response(200); self.send_header("Content-Type", "image/png")
+                    self.send_header("Content-Length", str(len(data))); self.end_headers()
+                    self.wfile.write(data)
+                else:
+                    self.send_error(404)
+                return
+            if not self._authed():
+                body = b"Auto-Keka: unauthorized. Scan the QR code in the app's Settings."
+                self.send_response(401); self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(body))); self.end_headers()
+                self.wfile.write(body); return
+            if route in ("/", "/index.html"):
                 self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8")
+                if token:   # remember the token so in-page fetch/SSE calls pass auth
+                    self.send_header("Set-Cookie", f"kt={token}; Path=/; SameSite=Lax")
                 self.send_header("Content-Length", str(len(html))); self.end_headers(); self.wfile.write(html)
-            elif self.path == "/api/state":
+            elif route == "/api/state":
                 self._json(backend.get_state())
-            elif self.path == "/events":
+            elif route == "/events":
                 self.send_response(200); self.send_header("Content-Type", "text/event-stream")
                 self.send_header("Cache-Control", "no-cache"); self.end_headers()
                 q = queue.Queue()
@@ -442,6 +583,8 @@ def run_browser():
             else:
                 self.send_error(404)
         def do_POST(self):
+            route = urlparse(self.path).path
+            if not self._authed(): self.send_error(401); return
             n = int(self.headers.get("Content-Length", 0) or 0)
             try: body = json.loads(self.rfile.read(n) or b"{}")
             except ValueError: body = {}
@@ -453,15 +596,79 @@ def run_browser():
                       "/api/apply_schedule": lambda: backend.apply_schedule(body),
                       "/api/install_deps": lambda: backend.install_deps(),
                       "/api/finish_onboarding": lambda: backend.finish_onboarding(),
+                      "/api/remote_info": lambda: backend.remote_info(),
                       "/api/activate_license": lambda: backend.activate_license(body.get("key"))}
-            fn = routes.get(self.path)
+            fn = routes.get(route)
             if not fn: self.send_error(404); return
             try: self._json(fn())
             except Exception as e: self._json({"ok": False, "message": str(e)}, 500)
 
+    bind, tries = port, 0
+    while True:
+        try:
+            httpd = ThreadingHTTPServer((host, bind), H)
+            break
+        except OSError:
+            tries += 1
+            if tries > 10: raise
+            bind = port + tries
+    return httpd, broadcast, httpd.server_address[1]
+
+
+# ── Phone remote (LAN, token-protected) ───────────────────────────────────────
+_REMOTE = {"url": None}
+
+
+def _remote_token():
+    """Persistent random access token for the phone remote (0600 in DATA_DIR)."""
+    p = os.path.join(kc.DATA_DIR, "remote_token")
+    try:
+        if os.path.exists(p):
+            tok = open(p, encoding="utf-8").read().strip()
+            if tok:
+                return tok
+        import secrets
+        tok = secrets.token_urlsafe(16)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(tok)
+        os.chmod(p, 0o600)
+        return tok
+    except OSError:
+        import secrets
+        return secrets.token_urlsafe(16)   # per-run token if the disk write fails
+
+
+def _lan_ip():
     import socket
-    s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), H)
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))       # no traffic sent — just picks the LAN route
+        return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+    finally:
+        s.close()
+
+
+def start_remote_server(backend):
+    """Serve the dashboard on the LAN next to the native window. Returns the
+    broadcast fn (for fanning out events) or None if the server can't start."""
+    try:
+        token = _remote_token()
+        port = int(os.environ.get("KEKA_REMOTE_PORT", "8377") or 8377)
+        httpd, broadcast, actual = _serve_http(backend, "0.0.0.0", port, token)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        _REMOTE["url"] = f"http://{_lan_ip()}:{actual}/?t={token}"
+        return broadcast
+    except Exception:
+        return None
+
+
+def run_browser():
+    import webbrowser
+    backend = Backend()
+    httpd, broadcast, port = _serve_http(backend, "127.0.0.1", 0, None)
+    backend.emit = broadcast
     url = f"http://127.0.0.1:{port}/"
     print(f"Native window unavailable — opened in your browser: {url}", flush=True)
     threading.Timer(0.6, lambda: webbrowser.open(url)).start()

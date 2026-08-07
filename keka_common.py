@@ -235,12 +235,31 @@ def _venv_python(windowless=False):
     return p if os.path.exists(p) else sys.executable
 
 
+def macos_app_bundle():
+    """Path to an installed Auto-Keka.app, or None. Preferring the bundle for
+    launches gives the process a real Dock identity (name + icon) instead of
+    showing as 'python3.13'."""
+    for p in ("/Applications/Auto-Keka.app",
+              os.path.expanduser("~/Applications/Auto-Keka.app"),
+              os.path.join(SCRIPT_DIR, "Auto-Keka.app")):
+        if os.path.isdir(p):
+            return p
+    return None
+
+
 def install_autostart():
     """Launch the Auto-Keka window automatically at login. Best-effort → bool."""
     ui = os.path.join(SCRIPT_DIR, "keka_ui.py")
     try:
         if sys.platform == "darwin":
-            py = _venv_python()
+            app = macos_app_bundle()
+            if app:
+                # Launch through LaunchServices so the Dock shows the app
+                # bundle's name and icon, not the python interpreter's.
+                prog = ('<string>/usr/bin/open</string>'
+                        f'<string>-a</string><string>{app}</string>')
+            else:
+                prog = f'<string>{_venv_python()}</string><string>{ui}</string>'
             la = os.path.expanduser("~/Library/LaunchAgents")
             os.makedirs(la, exist_ok=True)
             plist = os.path.join(la, "com.keka.app.plist")
@@ -251,8 +270,7 @@ def install_autostart():
                     '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
                     '<plist version="1.0"><dict>\n'
                     '  <key>Label</key><string>com.keka.app</string>\n'
-                    '  <key>ProgramArguments</key><array>'
-                    f'<string>{py}</string><string>{ui}</string></array>\n'
+                    f'  <key>ProgramArguments</key><array>{prog}</array>\n'
                     '  <key>RunAtLoad</key><true/>\n'
                     '  <key>ProcessType</key><string>Interactive</string>\n'
                     '</dict></plist>\n'
@@ -312,6 +330,56 @@ def remove_autostart():
     except Exception:
         return False
     return False
+def desktop_app_installed():
+    """Is the OS-native app wrapper (bundle / shortcut / .desktop) in place?"""
+    if sys.platform == "darwin":
+        return macos_app_bundle() is not None
+    if sys.platform.startswith("win"):
+        appdata = os.environ.get("APPDATA", "")
+        lnk = os.path.join(appdata, "Microsoft", "Windows", "Start Menu",
+                           "Programs", "Auto-Keka.lnk")
+        return os.path.exists(lnk)
+    return os.path.exists(os.path.expanduser(
+        "~/.local/share/applications/auto-keka.desktop"))
+
+
+def install_desktop_app():
+    """Build + install the native app wrapper for this OS, so users launch
+    'Auto-Keka' with an icon — never a python file. Best-effort → bool.
+
+    macOS: assemble Auto-Keka.app and copy it to /Applications (or
+    ~/Applications). Windows: Desktop + Start Menu shortcuts (icon, hidden
+    console). Linux: ~/.local/share .desktop entry + icon."""
+    pack = os.path.join(SCRIPT_DIR, "packaging")
+    try:
+        if sys.platform == "darwin":
+            subprocess.run(["bash", os.path.join(pack, "build_macos_app.sh")],
+                           capture_output=True, timeout=180)
+            src = os.path.join(SCRIPT_DIR, "Auto-Keka.app")
+            if not os.path.isdir(src):
+                return False
+            for dest_dir in ("/Applications", os.path.expanduser("~/Applications")):
+                try:
+                    os.makedirs(dest_dir, exist_ok=True)
+                    dest = os.path.join(dest_dir, "Auto-Keka.app")
+                    if os.path.isdir(dest):
+                        shutil.rmtree(dest)
+                    shutil.copytree(src, dest, symlinks=True)
+                    return True
+                except OSError:
+                    continue
+            return False
+        if sys.platform.startswith("win"):
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                 "-File", os.path.join(pack, "build_windows_app.ps1")],
+                capture_output=True, timeout=180)
+            return r.returncode == 0
+        r = subprocess.run(["bash", os.path.join(pack, "build_linux_app.sh")],
+                           capture_output=True, timeout=180)
+        return r.returncode == 0
+    except Exception:
+        return False
 # ─────────────────────────────────────────────────────────────────────────────
 
 

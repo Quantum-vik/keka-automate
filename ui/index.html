@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="theme-color" content="#eef4f2" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#101b18" media="(prefers-color-scheme: dark)" />
+<link rel="apple-touch-icon" href="/icon.png" />
 <title>Auto-Keka</title>
 <style>
   * { box-sizing: border-box; }
@@ -81,6 +84,12 @@
     box-shadow:0 6px 20px rgba(6,60,50,.10), inset 0 1px 0 rgba(255,255,255,.6); transition:background .15s ease; }
   .btn:hover { background:rgba(255,255,255,.82); }
   .btn:active { transform:translateY(1px); }
+  .btn:focus-visible, .save:focus-visible, .wbtn:focus-visible, .iconbtn:focus-visible,
+  #otp button:focus-visible, .sheet .close:focus-visible {
+    outline:2px solid var(--teal-500); outline-offset:2px; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation:none !important; transition:none !important; }
+  }
   .actions.busy .btn { pointer-events:none; }
   .actions.busy .btn:not(.working) { opacity:.45; }
   .btn.working { background:rgba(255,255,255,.9); }
@@ -110,13 +119,29 @@
   .day .row i { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
   .day .row span { font-family:var(--mono); font-size:12px; font-weight:500; color:var(--ink); }
   .day .row.dim span { color:rgba(18,51,46,.3); }
+  .day .dur { margin-top:9px; min-height:14px; font-family:var(--mono); font-size:10.5px;
+    font-weight:600; color:var(--teal-600); }
 
   /* activity */
-  .feed { display:flex; flex-direction:column; gap:11px; }
+  .feed { display:flex; flex-direction:column; gap:11px; max-height:196px; overflow-y:auto; padding-right:6px; }
+  .feed::-webkit-scrollbar, .setuplog::-webkit-scrollbar { width:6px; }
+  .feed::-webkit-scrollbar-thumb, .setuplog::-webkit-scrollbar-thumb { background:rgba(6,60,50,.18); border-radius:3px; }
   .feed .item { display:flex; align-items:center; gap:11px; }
   .feed .item i { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
   .feed .item .t { font-family:var(--mono); font-size:12px; font-weight:500; color:rgba(18,51,46,.4); width:62px; flex-shrink:0; }
   .feed .item .m { font-size:13px; font-weight:500; color:#153c36; }
+
+  /* toast — floating result feedback for actions */
+  #toast { position:absolute; left:50%; bottom:26px; transform:translateX(-50%) translateY(16px); z-index:60;
+    max-width:80%; padding:11px 18px; border-radius:14px; background:rgba(13,56,51,.92); color:#fff;
+    font-size:13.5px; font-weight:600; box-shadow:0 10px 30px rgba(6,60,50,.35);
+    opacity:0; pointer-events:none; transition:opacity .25s ease, transform .25s ease; }
+  #toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+  #toast.err { background:rgba(176,84,48,.95); }
+
+  /* action buttons reflect current state — "already done" actions recede */
+  .btn.done { opacity:.45; }
+  .btn.done:hover { background:rgba(255,255,255,.58); }
 
   /* OTP + toast */
   #otp { display:none; align-items:center; gap:12px; }
@@ -131,7 +156,9 @@
   .iconbtn:hover { background:rgba(255,255,255,.85); }
 
   /* ── settings sheet ───────────────────────────────────────────────────── */
-  #settings { position:absolute; inset:0; z-index:20; display:none; align-items:flex-start; justify-content:center;
+  /* overlays must cover the titlebar (z 40) — else the window chrome floats
+     on top of the sheet (was very visible on the phone layout) */
+  #settings { position:absolute; inset:0; z-index:45; display:none; align-items:flex-start; justify-content:center;
     padding:40px 24px; overflow-y:auto; background:rgba(6,40,35,.55); backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px); }
   #settings.show { display:flex; }
   .sheet { width:100%; max-width:440px; margin:auto; border-radius:22px; padding:24px; background:rgba(255,255,255,.78);
@@ -151,7 +178,9 @@
   .field.times { flex-direction:row; gap:12px; }
   .field.times > div { flex:1; min-width:0; display:flex; flex-direction:column; gap:5px; }
   .field.times input { font-family:var(--mono); letter-spacing:.05em; }
-  input[type="time"] { font-family:var(--mono); letter-spacing:.05em; cursor:pointer; }
+  /* strip the UA's own pill styling so our (light & dark) input skin applies */
+  input[type="time"] { -webkit-appearance:none; appearance:none;
+    font-family:var(--mono); letter-spacing:.05em; cursor:pointer; }
   input[type="time"]::-webkit-calendar-picker-indicator { opacity:.55; cursor:pointer; }
   input[type="time"]::-webkit-datetime-edit { color:var(--ink); }
   .save { height:40px; padding:0 16px; border:none; border-radius:11px; background:var(--teal-600); color:#fff;
@@ -172,7 +201,7 @@
   .save.ghost:hover { background:rgba(6,60,50,.12); }
 
   /* ── first-run overlays: dependency setup + onboarding wizard ──────────── */
-  #setup, #wizard, #gate { position:absolute; inset:0; z-index:30; display:none; align-items:center; justify-content:center;
+  #setup, #wizard, #gate { position:absolute; inset:0; z-index:46; display:none; align-items:center; justify-content:center;
     padding:34px 24px; overflow-y:auto; background:rgba(6,40,35,.6);
     backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); }
   #gate { z-index:50; }   /* license gate sits above everything */
@@ -208,6 +237,83 @@
   .wnote { display:flex; gap:9px; align-items:flex-start; margin-top:14px; padding:12px 14px; border-radius:13px;
     background:rgba(15,169,142,.10); font-size:12.5px; color:#0b6b58; line-height:1.5; }
   #wOtpWrap { display:none; margin-top:6px; }
+
+  /* ── dark mode — follows the OS appearance (WebKit maps it to system theme) ── */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink:#e9f4f0; --ink-2:rgba(216,238,231,.68); --ink-3:rgba(216,238,231,.5);
+      --glass:rgba(255,255,255,.09); --glass-strong:rgba(255,255,255,.12);
+      --glass-border:rgba(255,255,255,.17);
+    }
+    html, body { background:#0c1513; }
+    #win { background:#101b18; }
+    #titlebar { background:rgba(255,255,255,.045); border-bottom:.5px solid rgba(255,255,255,.08); }
+    .lights i { border-color:rgba(255,255,255,.15); }
+    .autopill { background:rgba(23,182,122,.16); }
+    .autopill span, .acct-ok { color:#35d69a; }
+    .iconbtn { background:rgba(255,255,255,.08); box-shadow:none; }
+    .iconbtn:hover { background:rgba(255,255,255,.15); }
+    .iconbtn svg line, .iconbtn svg circle { stroke:#cfe8e1; }
+    .card, .hero { box-shadow:0 8px 28px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.06); }
+    .hero { border-color:rgba(255,255,255,.12); }
+    .hero .timer { color:#dff3ec; }
+    .hero-date, .bar-legend, .day .dt, .feed .item .t, .pill em { color:rgba(213,235,228,.45); }
+    .bar { background:rgba(255,255,255,.10); }
+    .btn { background:rgba(255,255,255,.10);
+      box-shadow:0 6px 20px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.08); }
+    .btn:hover { background:rgba(255,255,255,.16); }
+    .btn.done:hover, .btn.done { background:rgba(255,255,255,.10); }
+    .btn.working { background:rgba(255,255,255,.15); }
+    .day { background:rgba(255,255,255,.08); border-color:rgba(255,255,255,.11); }
+    .day.today { background:rgba(15,169,142,.16); border:1px solid rgba(20,194,165,.4); }
+    .day .row.dim span { color:rgba(213,235,228,.28); }
+    .feed .item .m { color:#cfe8e1; }
+    #otp input, .field input, .wfield input {
+      background:rgba(255,255,255,.10); border-color:rgba(255,255,255,.16); color:var(--ink); }
+    input::placeholder { color:rgba(213,235,228,.35); }
+    input[type="time"]::-webkit-datetime-edit { color:var(--ink); }
+    .sheet, .wsheet { background:rgba(22,34,31,.94); border-color:rgba(255,255,255,.12); }
+    .sheet .close { background:rgba(255,255,255,.1); color:var(--ink-2); }
+    .sheet .close:hover { background:rgba(255,255,255,.16); }
+    .acct-card { background:rgba(255,255,255,.06); border-color:rgba(255,255,255,.12); }
+    .save.ghost { background:rgba(255,255,255,.08); color:#35d69a; border-color:rgba(255,255,255,.14); }
+    .save.ghost:hover { background:rgba(255,255,255,.14); }
+    .setuplog { background:rgba(255,255,255,.06); }
+    .wsteps i { background:rgba(255,255,255,.15); }
+    .wnote { color:#8fd8c6; }
+    #toast { background:rgba(230,242,238,.95); color:#0f2c26; box-shadow:0 10px 30px rgba(0,0,0,.5); }
+    #toast.err { background:rgba(240,150,100,.96); color:#241008; }
+    .day .dur { color:#35d69a; }
+    .feed::-webkit-scrollbar-thumb, .setuplog::-webkit-scrollbar-thumb { background:rgba(255,255,255,.18); }
+  }
+
+  /* ── remote (browser/phone) mode — no fake macOS window chrome ──────────── */
+  #win { height:100vh; height:100dvh; }   /* dvh: iOS Safari toolbar-safe */
+  .remote .lights { visibility:hidden; }
+  .remote #titlebar { padding-top:env(safe-area-inset-top); height:calc(52px + env(safe-area-inset-top)); }
+
+  /* ── phone / narrow layout (the web remote on a phone) ──────────────────── */
+  @media (max-width: 620px) {
+    #content { padding:14px; gap:12px; }
+    .hero { padding:18px 16px; }
+    .hero .timer { font-size:38px; }
+    .hero-status .txt { font-size:16px; }
+    .hero-top { margin-bottom:12px; }
+    .grid2 { grid-template-columns:1fr; gap:12px; }
+    .actions { gap:8px; }
+    .btn { height:46px; gap:6px; }
+    .btn span { font-size:12.5px; }
+    .card { padding:16px; border-radius:16px; }
+    .week { grid-template-columns:repeat(5, minmax(84px, 1fr)); gap:8px; overflow-x:auto; padding-bottom:4px; }
+    .big { font-size:19px; }
+    #titlebar { padding-left:12px; padding-right:12px; gap:8px; }
+    .autopill span { display:none; }    /* dot only — save titlebar space */
+    .autopill { padding:5px 8px; }
+    /* 16px stops iOS Safari from auto-zooming on focus */
+    .field input, .wfield input, #otp input, #licKey { font-size:16px; }
+    .sheet, .wsheet { padding:18px 16px; }
+    #settings, #setup, #wizard, #gate { padding:20px 12px; }
+  }
 </style>
 </head>
 <body>
@@ -334,6 +440,16 @@
           </div>
         </div>
 
+        <div class="sect" id="remoteSect" style="display:none">
+          <span class="kicker">Phone remote</span>
+          <div class="acct-card" style="text-align:center">
+            <img id="remoteQr" alt="" style="display:none;width:150px;height:150px;border-radius:10px;background:#fff;padding:6px;margin-bottom:8px" />
+            <div class="meta" id="remoteUrl" style="user-select:text;-webkit-user-select:text;word-break:break-all;margin:0 0 6px"></div>
+            <div class="meta" style="font-size:11.5px;margin:0">Scan with your iPhone camera — phone and computer must be on the same Wi-Fi.
+              The link carries your private access token; don't share it.</div>
+          </div>
+        </div>
+
         <div class="sect">
           <span class="kicker">Schedule (Mon–Fri)</span>
           <div class="field times">
@@ -435,6 +551,7 @@
       </div>
     </div>
 
+    <div id="toast"></div>
   </div>
 </div>
 
@@ -468,6 +585,9 @@ const MOCK = {
     { time: "Mon",   msg: "Device pass renewed for 14 days", kind: "info"},
   ],
 };
+
+/* remote (browser/phone) mode: drop the fake macOS window chrome */
+if (window.KEKA_REMOTE) document.documentElement.classList.add("remote");
 
 /* ── bridge detection ─────────────────────────────────────────────────────
    Real backend present when window.pywebview.api exists.  All calls are async
@@ -574,29 +694,64 @@ function render() {
     $("#sessBar").style.width = (days/14*100) + "%";
   }
 
+  // action buttons recede when their action is already done (still clickable —
+  // the backend is idempotent — but the UI shows which one is meaningful now)
+  const inBtn  = document.querySelector('[data-action="clockIn"]');
+  const outBtn = document.querySelector('[data-action="clockOut"]');
+  inBtn.classList.toggle("done", live);
+  outBtn.classList.toggle("done", !clockedIn && !dead);
+  inBtn.title  = live ? "Already clocked in" : "Clock in now";
+  outBtn.title = (!clockedIn && !dead) ? "Already clocked out" : "Clock out now";
+
   renderWeek(STATE.week);
   renderFeed(STATE.activity);
   applyGates();
 }
 
 function esc(s){ return String(s??"").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function dayDur(inT, outT){
+  const re = /^(\d{1,2}):(\d{2})$/, a = re.exec(inT||""), b = re.exec(outT||"");
+  if (!a || !b) return "";
+  const mins = (+b[1]*60 + +b[2]) - (+a[1]*60 + +a[2]);
+  return mins > 0 ? `${Math.floor(mins/60)}h ${pad(mins%60)}m` : "";
+}
 function renderWeek(week) {
-  $("#week").innerHTML = week.map(d => `
+  $("#week").innerHTML = week.map(d => {
+    const dur = dayDur(d.in, d.out);
+    return `
     <div class="day${d.today ? " today":""}">
       <div class="d">${esc(d.day)}</div><div class="dt">${esc(d.date)}</div>
       <div class="row${d.dim?" dim":""}"><i style="background:var(--present)"></i><span>${esc(d.in||"—")}</span></div>
       <div class="row${d.dim?" dim":""}"><i style="background:var(--out)"></i><span>${esc(d.out||"—")}</span></div>
-    </div>`).join("");
+      <div class="dur">${esc(dur)}</div>
+    </div>`;
+  }).join("");
 }
 function renderFeed(items) {
   const color = k => k==="in" ? "var(--present)" : k==="out" ? "var(--out)" : "var(--teal-500)";
-  $("#feed").innerHTML = items.slice(0,5).map(a => `
-    <div class="item"><i style="background:${color(a.kind)}"></i><span class="t">${esc(a.time)}</span><span class="m">${esc(a.msg)}</span></div>`).join("");
+  const n = new Date();
+  const today = `${n.getFullYear()}-${pad(n.getMonth()+1)}-${pad(n.getDate())}`;
+  const stamp = a => (a.date && a.date !== today)
+    ? new Date(a.date + "T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})
+    : a.time;   // older entries show their day; today's show the time
+  $("#feed").innerHTML = items.slice(0,12).map(a => `
+    <div class="item"><i style="background:${color(a.kind)}"></i><span class="t">${esc(stamp(a))}</span><span class="m">${esc(a.msg)}</span></div>`).join("");
 }
 function pushActivity(entry) {
   if (!STATE) return;   // a log can arrive before the first state load
-  STATE.activity = [entry, ...(STATE.activity||[])].slice(0,5);
+  STATE.activity = [entry, ...(STATE.activity||[])].slice(0,12);
   renderFeed(STATE.activity);
+}
+
+/* floating toast — the visible result of an action (the feed is the archive) */
+let _toastTimer = null;
+function toast(msg, isError) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.toggle("err", !!isError);
+  t.classList.add("show");
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => t.classList.remove("show"), 3400);
 }
 
 /* ── actions ──────────────────────────────────────────────────────────────
@@ -645,11 +800,15 @@ function afterPunch(res, action) {
     render(); return;
   }
   // with bridge: Python returns {ok,message}; Python also emits onState + onLog
-  if (res && res.message) pushActivity({time:hm(),msg:res.message,kind:action});
+  if (res && res.message) {
+    pushActivity({time:hm(),msg:res.message,kind:action});
+    toast(res.message, res.ok === false);
+  }
 }
 function toastRefresh(res) {
   const msg = (res && res.message) || "Session refreshed — device pass valid 14 days";
   pushActivity({ time: hm(), msg, kind: "info" });
+  toast(msg, !(res && res.ok));
 }
 
 /* re-login button (shown on the Device pass card while the session is dead) —
@@ -662,7 +821,7 @@ $("#reloginBtn").addEventListener("click", async () => {
   b.disabled = true; b.textContent = "Signing in… check for the OTP prompt";
   try {
     const r = await api.refresh();
-    toastRefresh(r);
+    toastRefresh(r);                    // toast + feed entry
     await load();                       // re-pull state so the card flips to alive
   } finally {
     _relogging = false;
@@ -835,10 +994,24 @@ function showEdit(cfg){
   $("#acctConfigured").style.display = "none";
   $("#acctEdit").style.display = "block";
 }
+async function loadRemoteInfo(){
+  const sect = $("#remoteSect");
+  // On the remote itself the QR is pointless and would re-expose the token.
+  if (window.KEKA_REMOTE) { sect.style.display = "none"; return; }
+  try {
+    if (!hasBridge() || !window.pywebview.api.remote_info) { sect.style.display = "none"; return; }
+    const r = await window.pywebview.api.remote_info();
+    if (!r || !r.enabled) { sect.style.display = "none"; return; }
+    sect.style.display = "block";
+    $("#remoteUrl").textContent = r.url;
+    if (r.qr) { $("#remoteQr").src = "data:image/png;base64," + r.qr; $("#remoteQr").style.display = "inline-block"; }
+  } catch (_) { sect.style.display = "none"; }
+}
 function openSettings(){
   accountView();
   $("#cfgIn").value    = toHHMM(STATE && STATE.scheduleIn,  "09:00");
   $("#cfgOut").value   = toHHMM(STATE && STATE.scheduleOut, "18:00");
+  loadRemoteInfo();
   $("#settings").classList.add("show");
 }
 function closeSettings(){ $("#settings").classList.remove("show"); }
@@ -848,9 +1021,20 @@ const validTime = s => /^([01]?\d|2[0-3]):[0-5]\d$/.test((s||"").trim());
 function toHHMM(s, fallback){ const m=/^(\d{1,2}):(\d{2})$/.exec((s||"").trim());
   return m ? `${pad(+m[1])}:${m[2]}` : fallback; }
 
-$("#gear").addEventListener("click", openSettings);
+$("#gear").addEventListener("click", () =>
+  $("#settings").classList.contains("show") ? closeSettings() : openSettings());
 $("#settingsClose").addEventListener("click", closeSettings);
 $("#settings").addEventListener("click", e => { if (e.target.id==="settings") closeSettings(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeSettings(); });
+
+/* keyboard access: the action tiles are divs — make them real buttons to a11y */
+document.querySelectorAll(".btn, .iconbtn").forEach(el => {
+  el.setAttribute("role", "button");
+  el.tabIndex = 0;
+  el.addEventListener("keydown", e => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); el.click(); }
+  });
+});
 $("#acctUpdate").addEventListener("click", () => showEdit());
 
 $("#saveCreds").addEventListener("click", async () => {
@@ -858,6 +1042,7 @@ $("#saveCreds").addEventListener("click", async () => {
   if (!creds.email && !(STATE && STATE.config && STATE.config.configured)) { alert("Enter your email and password first."); return; }
   if (hasBridge()) await window.pywebview.api.save_creds(creds);
   flashTag("#savedCreds");
+  toast("Credentials saved");
   pushActivity({ time: hm(), msg: "Credentials saved", kind: "info" });
   // update local state + flip back to the compact configured view
   if (STATE){ STATE.config = Object.assign({}, STATE.config, {
@@ -873,6 +1058,7 @@ $("#saveSched").addEventListener("click", async () => {
   if (STATE){ STATE.scheduleIn=inT; STATE.scheduleOut=outT; }
   render();
   flashTag("#savedSched");
+  toast(`Schedule applied — in ${inT}, out ${outT}, Mon–Fri`);
   pushActivity({ time: hm(), msg: `Schedule set · in ${inT}, out ${outT}`, kind: "info" });
 });
 

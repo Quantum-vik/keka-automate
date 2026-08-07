@@ -26,7 +26,6 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import keka_common as kc
-import keka_check as kck
 import license as lic
 
 UI_HTML = os.path.join(kc.SCRIPT_DIR, "ui", "index.html")
@@ -43,6 +42,7 @@ class Backend:
         self._otp_event = threading.Event()
         self._otp_value = None
         self._status = None
+        self._alive = None   # live session verdict: True/False, None = not probed yet
         self.log = logging.getLogger("keka_ui")
         self.log.setLevel(logging.INFO)
         self.log.handlers = [logging.NullHandler()]
@@ -73,18 +73,25 @@ class Backend:
                 with self._pw_lock:
                     s = kc.get_status()
                 if s:
-                    self._status = s
-                    self.push_state()
+                    self._status, self._alive = s, True
+                else:
+                    # Probe ran but we're not inside the app: the session is dead
+                    # if a session file exists, unknown if there is none at all.
+                    self._alive = False if os.path.exists(kc.SESSION_FILE) else None
+                self.push_state()
             except Exception:
-                pass
+                pass   # deps missing / browser failed — leave verdict unchanged
             time.sleep(90)
 
     # ── JS API methods ──────────────────────────────────────────────────────
     def get_state(self):
         kc.reload_config()
         env = kc._load_env()
-        exp = kck.remember_cookie_expiry()
+        health = kc.session_health()
+        exp = health["remember_exp"]
         days = max(0, min(14, int((exp - time.time()) / 86400))) if exp else 0
+        # Live probe verdict wins; fall back to the token's own expiry claim.
+        alive = self._alive if self._alive is not None else health["alive"]
         hist = kc.read_history(200)
         cin, cout = self._today_punches(hist)
         activity = [{"time": h["time"], "msg": h["msg"], "kind": h["kind"]}
@@ -103,6 +110,8 @@ class Backend:
             "scheduleIn": env.get("KEKA_IN_TIME", "09:00"),
             "scheduleOut": env.get("KEKA_OUT_TIME", "18:00"),
             "sessionDaysLeft": days,
+            "sessionAlive": alive,
+            "tokenExpiresAt": health["token_exp"] * 1000 if health["token_exp"] else None,
             "week": self._build_week(hist),
             "activity": activity,
             "depsReady": kc.deps_ready(),
@@ -171,13 +180,16 @@ class Backend:
         with self._pw_lock:
             ok = kc.interactive_login(self._otp_getter, self.log, headless=True)
             if ok:
+                self._alive = True
                 kc.log_history("info", "Session refreshed")
             try:
-                self._status = kc.get_status()
+                s = kc.get_status()
+                if s:
+                    self._status, self._alive = s, True
             except Exception:
                 pass
         self.push_state()
-        exp = kck.remember_cookie_expiry()
+        exp = kc.session_health()["remember_exp"]
         days = max(0, min(14, int((exp - time.time()) / 86400))) if exp else 0
         return {"ok": ok, "message": (f"Session refreshed — device pass valid {days} days"
                 if ok else "Login did not complete")}
@@ -287,8 +299,15 @@ class Backend:
                 self.push_log("Session expired — logging in first…")
                 if kc.interactive_login(self._otp_getter, self.log, headless=True):
                     rc = self._run_stream([VENV_PY, os.path.join(kc.SCRIPT_DIR, script)])
+            if rc == 0:
+                self._alive = True   # punch reached Keka — session verified live
             try:
-                self._status = kc.get_status()
+                s = kc.get_status()
+                self._status = s or self._status
+                if s:
+                    self._alive = True
+                elif rc != 0 and os.path.exists(kc.SESSION_FILE):
+                    self._alive = False
             except Exception:
                 pass
         self.push_state()

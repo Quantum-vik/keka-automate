@@ -23,6 +23,7 @@ import shutil
 import base64
 import logging
 import tempfile
+import subprocess
 from datetime import datetime
 from io import BytesIO
 
@@ -184,15 +185,25 @@ def _playwright_browsers_dir():
     return os.path.join(home, ".cache", "ms-playwright")
 
 
+_chromium_ok = None   # cache: once the right build is seen it can't un-install mid-run
+
+
 def chromium_installed():
-    """True if Playwright's Chromium has been downloaded."""
-    d = _playwright_browsers_dir()
-    if not os.path.isdir(d):
-        return False
-    for name in os.listdir(d):
-        if name.startswith("chromium-") or name.startswith("chromium_headless_shell-"):
-            return True
-    return False
+    """True if the EXACT Chromium build this Playwright version needs exists.
+    Merely finding a chromium-* folder is not enough — after a playwright
+    upgrade a stale build lingers there while launches fail with
+    'Executable doesn't exist'. Ask Playwright for the real executable path."""
+    global _chromium_ok
+    if _chromium_ok:
+        return True
+    try:
+        with sync_playwright() as p:
+            _chromium_ok = os.path.exists(p.chromium.executable_path)
+    except Exception:
+        d = _playwright_browsers_dir()   # driver unavailable — fall back to a dir probe
+        _chromium_ok = os.path.isdir(d) and any(
+            n.startswith(("chromium-", "chromium_headless_shell-")) for n in os.listdir(d))
+    return _chromium_ok
 
 
 def deps_ready():
@@ -576,6 +587,73 @@ def read_history(n=200):
     return out[-n:]
 
 
+# ── Session health (real token expiry, not elapsed-time guessing) ─────────────
+def _jwt_exp(token):
+    """The 'exp' claim (unix seconds) of a JWT, decoded WITHOUT verification —
+    we only need the expiry our own saved token claims. None if unparseable."""
+    try:
+        payload = token.split(".")[1]
+        payload = base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))
+        exp = json.loads(payload).get("exp")
+        return int(exp) if exp else None
+    except Exception:
+        return None
+
+
+def session_health():
+    """
+    Inspect session.json and report the REAL credential state — by decoding the
+    saved Keka access-token JWT's own expiry and the cookies' expiry stamps —
+    instead of inferring anything from elapsed wall-clock time. Instant (no
+    browser). Keys:
+
+      exists          session.json is present and readable
+      token_exp       unix ts when the saved access token expires (None if none found)
+      token_valid     True/False for that token, or None if no token found
+      remember_exp    unix ts when the 2FA remember-device cookie expires (None if absent)
+      remember_valid  True/False for that cookie, or None
+      alive           best static verdict: the access token's validity when known,
+                      else None (unknown). A live probe (get_status) can override.
+    """
+    out = {"exists": False, "token_exp": None, "token_valid": None,
+           "remember_exp": None, "remember_valid": None, "alive": None,
+           "checked_at": int(time.time())}
+    if not os.path.exists(SESSION_FILE):
+        return out
+    try:
+        with open(SESSION_FILE, encoding="utf-8") as f:
+            state = json.load(f)
+    except (OSError, ValueError):
+        return out
+    out["exists"] = True
+    now = time.time()
+
+    # Access tokens: Keka's SPA keeps JWTs in localStorage (access_token,
+    # id_token, and JWTs embedded in cached JSON blobs). Take the latest expiry.
+    exps = []
+    for origin in state.get("origins", []):
+        for item in origin.get("localStorage", []):
+            name = item.get("name") or ""
+            value = item.get("value") or ""
+            if name in ("access_token", "id_token"):
+                e = _jwt_exp(value.strip().strip('"'))
+                if e:
+                    exps.append(e)
+    if exps:
+        out["token_exp"] = max(exps)
+        out["token_valid"] = out["token_exp"] > now
+
+    for c in state.get("cookies", []):
+        if c.get("name") == "Identity.TwoFactorRememberMe":
+            exp = c.get("expires") or 0
+            if exp > 0:
+                out["remember_exp"] = exp
+                out["remember_valid"] = exp > now
+
+    out["alive"] = out["token_valid"]
+    return out
+
+
 def get_status():
     """Headless: is the user clocked 'in', 'out', or None (unknown/logged out)?"""
     if not os.path.exists(SESSION_FILE):
@@ -707,7 +785,7 @@ def run_punch(action, log_file):
     log.info("=== Keka Punch-%s started ===", label)
 
     if not EMAIL or not PASSWORD:
-        log.error("Missing KEKA_EMAIL / KEKA_PASSWORD — set them in %s/.env", SCRIPT_DIR)
+        log.error("Missing KEKA_EMAIL / KEKA_PASSWORD — set them in %s", ENV_FILE)
         sys.exit(1)
 
     if not os.path.exists(SESSION_FILE):

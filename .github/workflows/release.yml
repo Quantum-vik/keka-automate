@@ -3,11 +3,13 @@ name: Release
 # Build LOCKED, source-hidden binaries (Nuitka) for each OS and attach them to a
 # GitHub Release when a version tag is pushed:
 #
-#     git tag v1.1.0 && git push origin v1.1.0
+#     git tag v1.0.0 && git push origin v1.0.0
 #
-# NOTE: this ships COMPILED binaries, never source. Playwright + Nuitka bundling
-# can need per-OS tweaks — validate with a test tag before relying on it. A failed
-# build simply produces no release (safe: nothing is leaked).
+# SOURCE IS NEVER SHIPPED — releases contain compiled binaries only, so buyers
+# can't read or patch out the license check. If every build fails, no release
+# is published (nothing leaks). The compiled app is self-contained: it punches
+# via `<binary> --punch in|out`, schedules itself natively, and downloads
+# Chromium through the bundled Playwright driver on first run.
 
 on:
   push:
@@ -25,10 +27,13 @@ jobs:
         include:
           - os: macos-latest
             name: Auto-Keka-macos
+            mode: app          # PyObjC (Dock identity) requires app mode
           - os: windows-latest
             name: Auto-Keka-windows
+            mode: onefile
           - os: ubuntu-latest
             name: Auto-Keka-linux
+            mode: onefile
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -46,42 +51,45 @@ jobs:
         with:
           nuitka-version: main
           script-name: keka_ui.py
-          mode: onefile
+          mode: ${{ matrix.mode }}
           include-data-dir: ui=ui
-          include-module: license
+          include-module: |
+            license
+            keka_check
+          include-package-data: playwright
+          windows-console-mode: disable
 
-      - name: Package artifact
-        shell: bash
+      - name: Package — macOS (.app)
+        if: runner.os == 'macOS'
+        run: |
+          cd build
+          mv keka_ui.app Auto-Keka.app
+          ditto -c -k --keepParent Auto-Keka.app "../${{ matrix.name }}.zip"
+
+      - name: Package — Linux (onefile binary)
+        if: runner.os == 'Linux'
         run: |
           mkdir -p out
-          # Nuitka drops the binary in build/ — grab whatever it produced.
-          cp -R build/keka_ui* "out/${{ matrix.name }}" 2>/dev/null || \
-          cp -R build/*.app   "out/${{ matrix.name }}.app" 2>/dev/null || true
-          ( cd out && zip -r "${{ matrix.name }}.zip" . )
+          cp build/keka_ui.bin out/Auto-Keka
+          chmod +x out/Auto-Keka
+          cd out && zip "../${{ matrix.name }}.zip" Auto-Keka
+
+      - name: Package — Windows (onefile exe)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item build\keka_ui.exe Auto-Keka.exe
+          Compress-Archive -Path Auto-Keka.exe -DestinationPath "${{ matrix.name }}.zip"
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
-          path: out/${{ matrix.name }}.zip
-
-  # The documented install flow (README + release notes) is the SOURCE zip with
-  # the double-click launchers — this job guarantees it exists on every release.
-  # git archive packs TRACKED files only, so .env/session/keys can never leak.
-  source:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build source zip
-        run: git archive --format=zip --prefix=Auto-Keka/ -o Auto-Keka.zip HEAD
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Auto-Keka-source
-          path: Auto-Keka.zip
+          path: ${{ matrix.name }}.zip
 
   release:
-    needs: [build, source]
-    # Publish even if the (experimental) compiled builds fail — the source zip
-    # is the primary download and must always ship.
+    needs: build
+    # Publish whatever compiled successfully; if nothing did, fail with no
+    # release (never fall back to shipping source).
     if: always() && !cancelled()
     runs-on: ubuntu-latest
     steps:
@@ -95,7 +103,7 @@ jobs:
         run: |
           shopt -s nullglob
           files=(artifacts/*/*.zip)
-          [ ${#files[@]} -gt 0 ] || { echo "no artifacts produced"; exit 1; }
+          [ ${#files[@]} -gt 0 ] || { echo "no binaries built — refusing to release"; exit 1; }
           gh release create "${GITHUB_REF_NAME}" "${files[@]}" \
             --repo "${GITHUB_REPOSITORY}" \
             --title "Auto-Keka ${GITHUB_REF_NAME}" \

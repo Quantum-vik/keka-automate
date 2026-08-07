@@ -56,6 +56,11 @@ if _tess:
 # ── Config ────────────────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# True when running as a Nuitka-compiled binary (no source tree, no venv).
+# Frozen mode dispatches punches through `<binary> --punch` and installs the
+# schedule natively instead of via the repo's shell scripts.
+FROZEN = "__compiled__" in globals()
+
 
 def _app_data_dir():
     """A STABLE per-user folder for our data (.env, session, license, logs).
@@ -211,6 +216,23 @@ def deps_ready():
     return bool(_find_tesseract()) and chromium_installed()
 
 
+def install_chromium_frozen():
+    """Download Playwright's Chromium from a compiled binary. There is no venv
+    to run 'python -m playwright install', so drive the bundled node driver CLI
+    directly. Blocking (can take minutes) → bool."""
+    try:
+        from playwright._impl._driver import compute_driver_executable, get_driver_env
+        driver = compute_driver_executable()
+        cmd = list(driver) if isinstance(driver, (tuple, list)) else [str(driver)]
+        r = subprocess.run(cmd + ["install", "chromium"], env=get_driver_env(),
+                           capture_output=True, text=True, timeout=1800)
+        global _chromium_ok
+        _chromium_ok = None          # force a re-probe after the download
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
 # ── First-run onboarding flag ─────────────────────────────────────────────────
 def is_onboarded():
     return _load_env().get("KEKA_ONBOARDED", "") == "1"
@@ -253,11 +275,15 @@ def install_autostart():
     try:
         if sys.platform == "darwin":
             app = macos_app_bundle()
+            if FROZEN and ".app/" in sys.executable:
+                app = sys.executable.split(".app/", 1)[0] + ".app"
             if app:
                 # Launch through LaunchServices so the Dock shows the app
                 # bundle's name and icon, not the python interpreter's.
                 prog = ('<string>/usr/bin/open</string>'
                         f'<string>-a</string><string>{app}</string>')
+            elif FROZEN:
+                prog = f'<string>{sys.executable}</string>'
             else:
                 prog = f'<string>{_venv_python()}</string><string>{ui}</string>'
             la = os.path.expanduser("~/Library/LaunchAgents")
@@ -279,22 +305,23 @@ def install_autostart():
             subprocess.run(["launchctl", "load", plist], capture_output=True)
             return True
         if sys.platform.startswith("linux"):
-            py = _venv_python()
+            cmd = sys.executable if FROZEN else f"{_venv_python()} {ui}"
             ad = os.path.expanduser("~/.config/autostart")
             os.makedirs(ad, exist_ok=True)
             with open(os.path.join(ad, "auto-keka.desktop"), "w", encoding="utf-8") as f:
                 f.write(
                     "[Desktop Entry]\nType=Application\nName=Auto-Keka\n"
-                    f"Exec={py} {ui}\nX-GNOME-Autostart-enabled=true\nTerminal=false\n"
+                    f"Exec={cmd}\nX-GNOME-Autostart-enabled=true\nTerminal=false\n"
                 )
             return True
         if sys.platform.startswith("win"):
             import winreg
-            py = _venv_python(windowless=True)
+            val = (f'"{sys.executable}"' if FROZEN
+                   else f'"{_venv_python(windowless=True)}" "{ui}"')
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                                  r"Software\Microsoft\Windows\CurrentVersion\Run",
                                  0, winreg.KEY_SET_VALUE)
-            winreg.SetValueEx(key, "AutoKeka", 0, winreg.REG_SZ, f'"{py}" "{ui}"')
+            winreg.SetValueEx(key, "AutoKeka", 0, winreg.REG_SZ, val)
             winreg.CloseKey(key)
             return True
     except Exception:
@@ -330,6 +357,77 @@ def remove_autostart():
     except Exception:
         return False
     return False
+def _parse_hhmm(s, dh, dm):
+    try:
+        h, m = str(s).strip().split(":")
+        return int(h), int(m)
+    except (ValueError, AttributeError):
+        return dh, dm
+
+
+def install_schedule_native(in_time="09:00", out_time="18:00"):
+    """FROZEN-mode scheduler: register Mon-Fri punch jobs that invoke THIS
+    binary with --punch (the shell installers assume a source checkout + venv,
+    which a compiled distribution doesn't have). Best-effort → bool."""
+    exe = sys.executable
+    ih, im = _parse_hhmm(in_time, 9, 0)
+    oh, om = _parse_hhmm(out_time, 18, 0)
+    try:
+        if sys.platform == "darwin":
+            la = os.path.expanduser("~/Library/LaunchAgents")
+            os.makedirs(la, exist_ok=True)
+            uid = os.getuid()
+            for label, action, h, m in (("com.keka.punchin", "in", ih, im),
+                                        ("com.keka.punchout", "out", oh, om)):
+                cal = "".join(
+                    f"<dict><key>Weekday</key><integer>{d}</integer>"
+                    f"<key>Hour</key><integer>{h}</integer>"
+                    f"<key>Minute</key><integer>{m}</integer></dict>" for d in range(1, 6))
+                plist = os.path.join(la, f"{label}.plist")
+                with open(plist, "w", encoding="utf-8") as f:
+                    f.write(
+                        '<?xml version="1.0" encoding="UTF-8"?>\n'
+                        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+                        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+                        '<plist version="1.0"><dict>\n'
+                        f'  <key>Label</key><string>{label}</string>\n'
+                        '  <key>ProgramArguments</key><array>'
+                        f'<string>{exe}</string><string>--punch</string><string>{action}</string></array>\n'
+                        f'  <key>StartCalendarInterval</key><array>{cal}</array>\n'
+                        f'  <key>StandardOutPath</key><string>{log_path(f"keka_punch_{action}.log")}</string>\n'
+                        f'  <key>StandardErrorPath</key><string>{log_path(f"keka_punch_{action}.log")}</string>\n'
+                        '</dict></plist>\n')
+                subprocess.run(["launchctl", "bootout", f"gui/{uid}/{label}"],
+                               capture_output=True)
+                subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", plist],
+                               capture_output=True)
+            return True
+        if sys.platform.startswith("linux"):
+            cur = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+            keep = [l for l in (cur.stdout or "").splitlines()
+                    if "--punch" not in l and "keka_punch" not in l]
+            log = log_path("cron.log")
+            keep.append(f"{im} {ih} * * 1-5 {exe} --punch in >> {log} 2>&1")
+            keep.append(f"{om} {oh} * * 1-5 {exe} --punch out >> {log} 2>&1")
+            r = subprocess.run(["crontab", "-"], input="\n".join(keep) + "\n",
+                               capture_output=True, text=True)
+            return r.returncode == 0
+        if sys.platform.startswith("win"):
+            ok = True
+            for name, action, t in (("PunchIn", "in", f"{ih:02d}:{im:02d}"),
+                                    ("PunchOut", "out", f"{oh:02d}:{om:02d}")):
+                r = subprocess.run(
+                    ["schtasks", "/Create", "/F", "/TN", rf"Keka\{name}",
+                     "/SC", "WEEKLY", "/D", "MON,TUE,WED,THU,FRI",
+                     "/TR", f'"{exe}" --punch {action}', "/ST", t],
+                    capture_output=True)
+                ok = ok and r.returncode == 0
+            return ok
+    except Exception:
+        return False
+    return False
+
+
 def desktop_app_installed():
     """Is the OS-native app wrapper (bundle / shortcut / .desktop) in place?"""
     if sys.platform == "darwin":

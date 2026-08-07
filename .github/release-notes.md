@@ -1,26 +1,31 @@
-**Clock in/out on Keka, automatically — on macOS, Linux, and Windows.**
+**Clock in/out on Keka, automatically — compiled apps for macOS, Windows, and Linux. No source, no Python needed.**
 
-### 📥 Install (no terminal)
-1. Download the zip below and **unzip** it anywhere.
-2. Double-click the launcher for your OS inside the folder:
+### 📥 Install
+1. Download the zip for **your OS** below and unzip it.
+2. Run it:
 
-| OS | Double-click |
-|----|--------------|
-| 🍎 macOS   | `Auto-Keka.command` |
-| 🪟 Windows | `Auto-Keka.bat` |
-| 🐧 Linux   | `Auto-Keka.sh` |
+| OS | Zip | Run |
+|----|-----|-----|
+| 🍎 macOS   | `Auto-Keka-macos.zip`   | drag `Auto-Keka.app` to Applications, then open it |
+| 🪟 Windows | `Auto-Keka-windows.zip` | double-click `Auto-Keka.exe` |
+| 🐧 Linux   | `Auto-Keka-linux.zip`   | `chmod +x Auto-Keka && ./Auto-Keka` |
 
-3. First run shows a **"Setting up…"** panel while it installs the browser + OCR
-   engine (one time), then a **wizard**: Keka login → OTP from your email → pick
-   clock-in/out times → done. It then runs in the background, Mon–Fri, and
-   re-opens at login.
+3. The app walks you through everything: license key → Keka login → OTP from
+   your email → pick clock-in/out times → done. It punches Mon–Fri on your
+   schedule (jobs run even with the window closed) and re-opens at login.
+
+### 🔧 First run
+- The app downloads its private browser engine automatically (one time, ~100 MB).
+- The captcha reader (tesseract) comes from your OS:
+  **macOS** `brew install tesseract` · **Windows** [UB-Mannheim installer](https://github.com/UB-Mannheim/tesseract) ·
+  **Linux** `sudo apt install tesseract-ocr` (or your distro's package).
+  The app tells you in-window if it's missing.
 
 ### ⚠️ First-open "unknown developer" warning
 The app isn't code-signed, so your OS may warn once:
-- **macOS** → right-click `Auto-Keka.command` → **Open** → **Open**.
+- **macOS** → right-click `Auto-Keka.app` → **Open** → **Open**.
 - **Windows** → **More info** → **Run anyway**.
 
-### 🐧 Linux note
-The OCR engine (tesseract) installs via your package manager, which needs `sudo`.
-If the in-app setup can't get root, run `./setup.sh --phase heavy` once in a
-terminal. macOS & Windows need no admin.
+### 🔑 License
+The app asks for your license key on first open — paste the key you received
+when you purchased.

@@ -143,13 +143,23 @@ class Backend:
                 return {"ok": True, "ready": True}
             self._deps_installing = True
             self.push_log("Setting up — downloading browser + OCR engine…")
-            plat = sys.platform
-            if plat.startswith("win"):
-                cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-File",
-                       os.path.join(kc.SCRIPT_DIR, "setup.ps1"), "-Phase", "heavy"]
+            if kc.FROZEN:
+                # No source tree/venv in the compiled build — use the bundled
+                # Playwright driver for Chromium; tesseract needs the OS package.
+                ok = kc.install_chromium_frozen()
+                rc = 0 if ok else 1
+                if not kc._find_tesseract():
+                    self.push_log("Install the tesseract OCR engine: "
+                                  "macOS 'brew install tesseract' · Windows "
+                                  "UB-Mannheim installer · Linux distro package.", "out")
             else:
-                cmd = ["bash", os.path.join(kc.SCRIPT_DIR, "setup.sh"), "--phase", "heavy"]
-            rc = self._run_stream(cmd)
+                plat = sys.platform
+                if plat.startswith("win"):
+                    cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-File",
+                           os.path.join(kc.SCRIPT_DIR, "setup.ps1"), "-Phase", "heavy"]
+                else:
+                    cmd = ["bash", os.path.join(kc.SCRIPT_DIR, "setup.sh"), "--phase", "heavy"]
+                rc = self._run_stream(cmd)
             ready = kc.deps_ready()
             self._deps_installing = False
             self.push_state()
@@ -249,6 +259,12 @@ class Backend:
         obj = obj or {}
         it, ot = (obj.get("inTime") or "").strip(), (obj.get("outTime") or "").strip()
         kc.update_env({"KEKA_IN_TIME": it, "KEKA_OUT_TIME": ot})
+        if kc.FROZEN:
+            # Compiled build: schedule natively — jobs call this binary --punch.
+            ok = kc.install_schedule_native(it, ot)
+            kc.log_history("info", f"Schedule set · in {it}, out {ot}")
+            self.push_state()
+            return {"ok": bool(ok)}
         sd = os.path.join(kc.SCRIPT_DIR, "scheduling")
         plat = sys.platform
         if plat == "darwin":
@@ -325,12 +341,16 @@ class Backend:
     def _do_punch(self, action):
         with self._pw_lock:
             kc.reload_config()
-            script = "keka_punch_in.py" if action == "in" else "keka_punch_out.py"
-            rc = self._run_stream([VENV_PY, os.path.join(kc.SCRIPT_DIR, script)])
+            if kc.FROZEN:   # compiled build: re-invoke this binary in punch mode
+                cmd = [sys.executable, "--punch", action]
+            else:
+                script = "keka_punch_in.py" if action == "in" else "keka_punch_out.py"
+                cmd = [VENV_PY, os.path.join(kc.SCRIPT_DIR, script)]
+            rc = self._run_stream(cmd)
             if rc != 0:
                 self.push_log("Session expired — logging in first…")
                 if kc.interactive_login(self._otp_getter, self.log, headless=True):
-                    rc = self._run_stream([VENV_PY, os.path.join(kc.SCRIPT_DIR, script)])
+                    rc = self._run_stream(cmd)
             if rc == 0:
                 self._alive = True   # punch reached Keka — session verified live
             try:
@@ -677,6 +697,17 @@ def run_browser():
 
 
 def main():
+    # Headless dispatch — lets the compiled binary act as its own punch/check
+    # tool for the scheduler:  Auto-Keka --punch in|out  ·  Auto-Keka --check
+    args = sys.argv[1:]
+    if args[:1] == ["--punch"] and len(args) > 1 and args[1] in ("in", "out"):
+        kc.run_punch(args[1], kc.log_path(f"keka_punch_{args[1]}.log"))
+        return
+    if args[:1] == ["--check"]:
+        import keka_check
+        keka_check.main()
+        return
+
     if not os.path.exists(UI_HTML):
         print(f"UI file not found: {UI_HTML}", file=sys.stderr); sys.exit(1)
     try:

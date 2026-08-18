@@ -57,7 +57,7 @@ def load_license():
         try:
             with open(LICENSE_FILE, encoding="utf-8") as f:
                 return f.read().strip()
-        except OSError:
+        except (OSError, ValueError):
             pass
     return os.environ.get("KEKA_LICENSE", "")
 

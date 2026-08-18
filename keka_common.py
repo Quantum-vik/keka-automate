@@ -964,81 +964,85 @@ def run_punch(action, log_file):
         log.error("No session file at %s — run:  python keka_setup.py", SESSION_FILE)
         sys.exit(1)
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        ctx     = browser.new_context(storage_state=SESSION_FILE)
-        page    = ctx.new_page()
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            ctx     = browser.new_context(storage_state=SESSION_FILE)
+            page    = ctx.new_page()
 
-        # Go straight to the attendance page using the saved session.
-        # NOTE: the Keka SPA polls in the background and never reaches
-        # "networkidle" — use "domcontentloaded" + a fixed settle wait instead.
-        page.goto(ATTENDANCE_URL, wait_until="domcontentloaded", timeout=30_000)
-        page.wait_for_timeout(5000)
-
-        if not is_logged_in(page):
-            # Try to recover automatically (password + captcha, no OTP for ~14 days)
-            if not attempt_relogin(ctx, page, log):
-                shot = tmp_path(f"keka_punch{action}_expired_{datetime.now():%Y%m%d_%H%M%S}.png")
-                page.screenshot(path=shot)
-                log.error("Could not recover session. Re-run: python keka_setup.py")
-                log.error("Screenshot: %s", shot)
-                browser.close()
-                sys.exit(1)
-
-        log.info("Session valid — attendance page loaded")
-
-        # Idempotency guard: skip if already in the desired state.
-        # Clocked-in  → primary button reads "Web Clock-out"
-        # Clocked-out → primary button reads "Web Clock-In"
-        already_in  = page.locator('text="Web Clock-out"').count() > 0
-        already_out = page.locator('text="Web Clock-In"').count() > 0
-        if action == "in" and already_in:
-            log.info("Already clocked IN — nothing to do")
-            log_history("in", "Already clocked in — no double-punch")
-            browser.close()
-            cleanup_pngs(log)
-            return
-        if action == "out" and already_out:
-            log.info("Already clocked OUT — nothing to do")
-            log_history("out", "Already clocked out — no double-punch")
-            browser.close()
-            cleanup_pngs(log)
-            return
-
-        if not click_punch(page, log, action):
-            # SPA may still be settling (or another tab just changed state).
-            # Reload, re-check idempotency, and try once more before failing.
-            log.warning("Punch-%s button not found — reloading and retrying", action)
+            # Go straight to the attendance page using the saved session.
+            # NOTE: the Keka SPA polls in the background and never reaches
+            # "networkidle" — use "domcontentloaded" + a fixed settle wait instead.
             page.goto(ATTENDANCE_URL, wait_until="domcontentloaded", timeout=30_000)
-            page.wait_for_timeout(6000)
-            if action == "in" and page.locator('text="Web Clock-out"').count() > 0:
-                log.info("Already clocked IN after reload — nothing to do")
+            page.wait_for_timeout(5000)
+
+            if not is_logged_in(page):
+                # Try to recover automatically (password + captcha, no OTP for ~14 days)
+                if not attempt_relogin(ctx, page, log):
+                    shot = tmp_path(f"keka_punch{action}_expired_{datetime.now():%Y%m%d_%H%M%S}.png")
+                    page.screenshot(path=shot)
+                    log.error("Could not recover session. Re-run: python keka_setup.py")
+                    log.error("Screenshot: %s", shot)
+                    browser.close()
+                    sys.exit(1)
+
+            log.info("Session valid — attendance page loaded")
+
+            # Idempotency guard: skip if already in the desired state.
+            # Clocked-in  → primary button reads "Web Clock-out"
+            # Clocked-out → primary button reads "Web Clock-In"
+            already_in  = page.locator('text="Web Clock-out"').count() > 0
+            already_out = page.locator('text="Web Clock-In"').count() > 0
+            if action == "in" and already_in:
+                log.info("Already clocked IN — nothing to do")
                 log_history("in", "Already clocked in — no double-punch")
-                browser.close(); cleanup_pngs(log); return
-            if action == "out" and page.locator('text="Web Clock-In"').count() > 0:
-                log.info("Already clocked OUT after reload — nothing to do")
-                log_history("out", "Already clocked out — no double-punch")
-                browser.close(); cleanup_pngs(log); return
-            if not click_punch(page, log, action):
-                shot = tmp_path(f"keka_punch{action}_debug_{datetime.now():%Y%m%d_%H%M%S}.png")
-                page.screenshot(path=shot)
-                log.error("Punch-%s button NOT found. Screenshot: %s", action, shot)
                 browser.close()
-                sys.exit(1)
+                cleanup_pngs(log)
+                return
+            if action == "out" and already_out:
+                log.info("Already clocked OUT — nothing to do")
+                log_history("out", "Already clocked out — no double-punch")
+                browser.close()
+                cleanup_pngs(log)
+                return
 
-        page.wait_for_timeout(3000)
+            if not click_punch(page, log, action):
+                # SPA may still be settling (or another tab just changed state).
+                # Reload, re-check idempotency, and try once more before failing.
+                log.warning("Punch-%s button not found — reloading and retrying", action)
+                page.goto(ATTENDANCE_URL, wait_until="domcontentloaded", timeout=30_000)
+                page.wait_for_timeout(6000)
+                if action == "in" and page.locator('text="Web Clock-out"').count() > 0:
+                    log.info("Already clocked IN after reload — nothing to do")
+                    log_history("in", "Already clocked in — no double-punch")
+                    browser.close(); cleanup_pngs(log); return
+                if action == "out" and page.locator('text="Web Clock-In"').count() > 0:
+                    log.info("Already clocked OUT after reload — nothing to do")
+                    log_history("out", "Already clocked out — no double-punch")
+                    browser.close(); cleanup_pngs(log); return
+                if not click_punch(page, log, action):
+                    shot = tmp_path(f"keka_punch{action}_debug_{datetime.now():%Y%m%d_%H%M%S}.png")
+                    page.screenshot(path=shot)
+                    log.error("Punch-%s button NOT found. Screenshot: %s", action, shot)
+                    browser.close()
+                    sys.exit(1)
 
-        # Re-save session so its expiry keeps rolling forward
-        try:
-            save_session(ctx)
-        except Exception:
-            pass
+            page.wait_for_timeout(3000)
 
-        shot = tmp_path(f"keka_punch{action}_{datetime.now():%Y%m%d_%H%M%S}.png")
-        page.screenshot(path=shot)
-        log.info("Screenshot: %s", shot)
-        log.info("=== Punch-%s complete ===", label)
-        log_history(action, f"Clocked {'in' if action == 'in' else 'out'}")
-        browser.close()
+            # Re-save session so its expiry keeps rolling forward
+            try:
+                save_session(ctx)
+            except Exception:
+                pass
+
+            shot = tmp_path(f"keka_punch{action}_{datetime.now():%Y%m%d_%H%M%S}.png")
+            page.screenshot(path=shot)
+            log.info("Screenshot: %s", shot)
+            log.info("=== Punch-%s complete ===", label)
+            log_history(action, f"Clocked {'in' if action == 'in' else 'out'}")
+            browser.close()
+    except Exception:
+        log.exception("Unhandled error during Punch-%s", label)
+        raise
 
     cleanup_pngs(log)

@@ -134,11 +134,11 @@ def _load_env():
 def _apply_env(values):
     """Set the module-level config from a parsed .env dict + real env vars."""
     global BASE_URL, TENANT_HOST, ATTENDANCE_URL, EMAIL, PASSWORD, IN_TIME, OUT_TIME
-    BASE_URL = os.environ.get("KEKA_BASE_URL") or values.get("KEKA_BASE_URL", "https://<company-name>.keka.com")
+    BASE_URL = os.environ.get("KEKA_BASE_URL") or values.get("KEKA_BASE_URL") or "https://<company-name>.keka.com"
     TENANT_HOST = BASE_URL.split("://")[-1].split("/")[0]
     ATTENDANCE_URL = f"{BASE_URL}/#/me/attendance/logs"
-    EMAIL = os.environ.get("KEKA_EMAIL") or values.get("KEKA_EMAIL", "")
-    PASSWORD = os.environ.get("KEKA_PASSWORD") or values.get("KEKA_PASSWORD", "")
+    EMAIL = os.environ.get("KEKA_EMAIL") or values.get("KEKA_EMAIL") or ""
+    PASSWORD = os.environ.get("KEKA_PASSWORD") or values.get("KEKA_PASSWORD") or ""
     IN_TIME = values.get("KEKA_IN_TIME", "09:00")
     OUT_TIME = values.get("KEKA_OUT_TIME", "18:00")
 

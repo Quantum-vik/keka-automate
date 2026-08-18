@@ -161,14 +161,16 @@ def update_env(updates):
         if v is not None:
             current[str(k)] = str(v)
     env_path = ENV_FILE
+    tmp_path = env_path + ".tmp"
     lines = ["# Keka credentials + settings. Private — keep chmod 600."]
     lines += [f"{k}={v}" for k, v in current.items()]
-    with open(env_path, "w", encoding="utf-8") as f:
+    with open(tmp_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     try:
-        os.chmod(env_path, 0o600)
+        os.chmod(tmp_path, 0o600)
     except OSError:
         pass
+    os.replace(tmp_path, env_path)
     reload_config()
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -594,12 +596,16 @@ def is_logged_in(page):
 
 def save_session(ctx):
     """Persist the browser session, then lock the file to owner-only (0600).
-    session.json holds auth cookies, so it must not be world-readable."""
-    ctx.storage_state(path=SESSION_FILE)
+    session.json holds auth cookies, so it must not be world-readable.
+    Written to a tmp file and renamed into place so a crash mid-write can't
+    corrupt an existing session."""
+    tmp = SESSION_FILE + ".tmp"
+    ctx.storage_state(path=tmp)
     try:
-        os.chmod(SESSION_FILE, 0o600)   # no-op-ish on Windows, harmless
+        os.chmod(tmp, 0o600)   # no-op-ish on Windows, harmless
     except OSError:
         pass
+    os.replace(tmp, SESSION_FILE)
 
 
 # ── UI-driven headless login (email OTP entered in the app, no browser popup) ──

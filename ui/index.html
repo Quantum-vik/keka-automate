@@ -294,25 +294,25 @@
 
   /* ── phone / narrow layout (the web remote on a phone) ──────────────────── */
   @media (max-width: 620px) {
-    #content { padding:14px; gap:12px; }
-    .hero { padding:18px 16px; }
-    .hero .timer { font-size:38px; }
+    #content { padding:14px; gap:var(--sp-3); }
+    .hero { padding:18px var(--sp-4); }
+    .hero .timer { font-size:40px; }
     .hero-status .txt { font-size:16px; }
-    .hero-top { margin-bottom:12px; }
-    .grid2 { grid-template-columns:1fr; gap:12px; }
-    .actions { gap:8px; }
+    .hero-top { margin-bottom:var(--sp-3); }
+    .grid2 { grid-template-columns:1fr; gap:var(--sp-3); }
+    .actions { gap:var(--sp-2); }
     .btn { height:46px; gap:6px; }
     .btn span { font-size:12.5px; }
-    .card { padding:16px; border-radius:16px; }
-    .week { grid-template-columns:repeat(5, minmax(84px, 1fr)); gap:8px; overflow-x:auto; padding-bottom:4px; }
+    .card { padding:var(--sp-4); border-radius:var(--r-md); }
+    .week { grid-template-columns:repeat(5, minmax(84px, 1fr)); gap:var(--sp-2); overflow-x:auto; padding-bottom:4px; }
     .big { font-size:19px; }
     #titlebar { padding-left:12px; padding-right:12px; gap:8px; }
     .autopill span { display:none; }    /* dot only — save titlebar space */
     .autopill { padding:5px 8px; }
     /* 16px stops iOS Safari from auto-zooming on focus */
     .field input, .wfield input, #otp input, #licKey { font-size:16px; }
-    .sheet, .wsheet { padding:18px 16px; }
-    #settings, #setup, #wizard, #gate { padding:20px 12px; }
+    .sheet, .wsheet { padding:18px var(--sp-4); }
+    #settings, #setup, #wizard, #gate { padding:var(--sp-5) var(--sp-3); }
   }
 </style>
 </head>
@@ -441,7 +441,7 @@
         <div class="sect" id="remoteSect" style="display:none">
           <span class="kicker">Phone remote</span>
           <div class="acct-card" style="text-align:center">
-            <img id="remoteQr" alt="" style="display:none;width:150px;height:150px;border-radius:10px;background:#fff;padding:6px;margin-bottom:8px" />
+            <img id="remoteQr" alt="" style="display:none;width:150px;height:150px;border-radius:var(--r-sm);background:#fff;padding:6px;margin-bottom:8px" />
             <div class="meta" id="remoteUrl" style="user-select:text;-webkit-user-select:text;word-break:break-all;margin:0 0 6px"></div>
             <div class="meta" style="font-size:11.5px;margin:0">Scan with your iPhone camera — phone and computer must be on the same Wi-Fi.
               The link carries your private access token; don't share it.</div>

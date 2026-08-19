@@ -25,3 +25,7 @@ dist/
 *.dist/
 *.onefile-build/
 .gstack/
+
+# Swift / macOS native client build output
+macos/.build/
+macos/build/

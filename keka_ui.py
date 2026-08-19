@@ -684,6 +684,44 @@ def start_remote_server(backend):
         return None
 
 
+SIDECAR_FILE = os.path.join(kc.DATA_DIR, "sidecar.json")
+
+
+def run_serve(port=0):
+    """Headless API mode for a native front-end (the Swift macOS client).
+
+    Same HTTP + SSE surface the phone remote already speaks, but bound to
+    loopback only and with no browser popped open. The chosen port and token
+    are written to SIDECAR_FILE so the front-end can find us without having to
+    scrape stdout — the port is normally 0 (kernel-assigned) to avoid clashing
+    with the phone remote on 8377.
+    """
+    backend = Backend()
+    token = _remote_token()
+    httpd, broadcast, actual = _serve_http(backend, "127.0.0.1", port, token)
+    backend.emit = broadcast
+
+    info = {"port": actual, "token": token, "pid": os.getpid()}
+    try:
+        with open(SIDECAR_FILE, "w", encoding="utf-8") as f:
+            json.dump(info, f)
+        os.chmod(SIDECAR_FILE, 0o600)      # carries the API token — owner only
+    except OSError as e:
+        print(f"warning: could not write {SIDECAR_FILE}: {e}", file=sys.stderr, flush=True)
+
+    # Also emit on stdout so a parent process can read it without polling a file.
+    print(json.dumps(info), flush=True)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        try:
+            os.remove(SIDECAR_FILE)        # never leave a stale port/token behind
+        except OSError:
+            pass
+
+
 def run_browser():
     import webbrowser
     backend = Backend()
@@ -706,6 +744,14 @@ def main():
     if args[:1] == ["--check"]:
         import keka_check
         keka_check.main()
+        return
+    if args[:1] == ["--serve"]:
+        # Auto-Keka --serve [port] — headless API for the native macOS client.
+        try:
+            port = int(args[1]) if len(args) > 1 else 0
+        except ValueError:
+            print(f"invalid port: {args[1]}", file=sys.stderr); sys.exit(2)
+        run_serve(port)
         return
 
     if not os.path.exists(UI_HTML):

@@ -132,8 +132,8 @@
 
   /* toast — floating result feedback for actions */
   #toast { position:absolute; left:50%; bottom:26px; transform:translateX(-50%) translateY(16px); z-index:60;
-    max-width:80%; padding:11px 18px; border-radius:14px; background:rgba(13,56,51,.92); color:#fff;
-    font-size:13.5px; font-weight:600; box-shadow:0 10px 30px rgba(6,60,50,.35);
+    max-width:80%; padding:11px 18px; border-radius:var(--r-md); background:rgba(13,56,51,.92); color:#fff;
+    font-size:13.5px; font-weight:600; box-shadow:var(--elev-modal);
     opacity:0; pointer-events:none; transition:opacity .25s ease, transform .25s ease; }
   #toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
   #toast.err { background:rgba(176,84,48,.95); }
@@ -145,9 +145,9 @@
   /* OTP + toast */
   #otp { display:none; align-items:center; gap:12px; }
   #otp.show { display:flex; }
-  #otp input { flex:1; height:44px; border-radius:12px; border:.5px solid var(--glass-border); background:rgba(255,255,255,.7);
+  #otp input { flex:1; height:44px; border-radius:var(--r-sm); border:.5px solid var(--glass-border); background:rgba(255,255,255,.7);
     font-family:var(--mono); font-size:18px; letter-spacing:.3em; text-align:center; color:var(--ink); padding:0 12px; }
-  #otp button { height:44px; padding:0 18px; border:none; border-radius:12px; background:var(--teal-600); color:#fff; font-weight:600; font-size:14px; cursor:pointer; }
+  #otp button { height:44px; padding:0 18px; border:none; border-radius:var(--r-sm); background:var(--teal-600); color:#fff; font-weight:600; font-size:14px; cursor:pointer; }
 
   /* ── title-bar icon button (gear) ─────────────────────────────────────── */
   .iconbtn { width:30px; height:30px; border-radius:var(--r-sm); display:flex; align-items:center; justify-content:center; cursor:pointer;
@@ -243,6 +243,8 @@
       --ink:#e9f4f0; --ink-2:rgba(216,238,231,.68); --ink-3:rgba(216,238,231,.5);
       --glass:rgba(255,255,255,.09); --glass-strong:rgba(255,255,255,.12);
       --glass-border:rgba(255,255,255,.17);
+      /* desaturate the accent so buttons/links/bars read on a dark field */
+      --teal-600:#2dd4a8; --teal-500:#3fe0bd; --teal-grad:linear-gradient(90deg,#2dd4a8,#1fb89a);
     }
     html, body { background:#0c1513; }
     #win { background:#101b18; }
@@ -250,16 +252,15 @@
     .lights i { border-color:rgba(255,255,255,.15); }
     .autopill { background:rgba(23,182,122,.16); }
     .autopill span, .acct-ok { color:#35d69a; }
-    .iconbtn { background:rgba(255,255,255,.08); box-shadow:none; }
+    .iconbtn { background:rgba(255,255,255,.08); }
     .iconbtn:hover { background:rgba(255,255,255,.15); }
     .iconbtn svg line, .iconbtn svg circle { stroke:#cfe8e1; }
-    .card, .hero { box-shadow:0 8px 28px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.06); }
+    .card, .hero, .btn, .day, .iconbtn { box-shadow:0 1px 2px rgba(0,0,0,.25), 0 6px 20px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.06); }
     .hero { border-color:rgba(255,255,255,.12); }
     .hero .timer { color:#dff3ec; }
     .hero-date, .bar-legend, .day .dt, .feed .item .t, .pill em { color:rgba(213,235,228,.45); }
     .bar { background:rgba(255,255,255,.10); }
-    .btn { background:rgba(255,255,255,.10);
-      box-shadow:0 6px 20px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.08); }
+    .btn { background:rgba(255,255,255,.10); }
     .btn:hover { background:rgba(255,255,255,.16); }
     .btn.done:hover, .btn.done { background:rgba(255,255,255,.10); }
     .btn.working { background:rgba(255,255,255,.15); }

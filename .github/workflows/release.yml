@@ -123,8 +123,65 @@ jobs:
           name: ${{ matrix.name }}
           path: ${{ matrix.name }}.zip
 
-  release:
+  # ── Native macOS client (SwiftUI menu-bar app over the compiled core) ───────
+  # Reuses the macOS binary the matrix above already produced: that binary IS
+  # keka_ui.py compiled, so it already answers `--serve`. Nothing extra is
+  # compiled on the Python side.
+  macos-native:
+    name: macOS native client
     needs: build
+    # Never block the release: if this fails, the cross-platform builds still
+    # ship (the release job below runs with always()).
+    if: always() && !cancelled()
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the compiled macOS core
+        uses: actions/download-artifact@v4
+        with:
+          name: Auto-Keka-macos
+          path: core
+
+      - name: Locate the core executable
+        id: core
+        run: |
+          cd core
+          unzip -q Auto-Keka-macos.zip
+          # Nuitka names the binary after the script, and the app-name option
+          # only sets the display name — so find it rather than hardcode it.
+          exe=$(find Auto-Keka.app/Contents/MacOS -type f -perm +111 | head -1)
+          [ -n "$exe" ] || { echo "no executable inside Auto-Keka.app"; exit 1; }
+          echo "path=$PWD/$exe" >> "$GITHUB_OUTPUT"
+          echo "found core: $exe"
+
+      - name: Build the native client
+        run: ./macos/build-app.sh --release --core "${{ steps.core.outputs.path }}"
+
+      - name: Verify the bundle
+        run: |
+          app="macos/build/Auto-Keka Native.app"
+          test -x "$app/Contents/MacOS/AutoKeka"      || { echo "missing client binary"; exit 1; }
+          test -x "$app/Contents/MacOS/auto-keka-core" || { echo "core was not bundled"; exit 1; }
+          # A dev-fallback key here would mean the release build is still
+          # pointing at somebody's checkout.
+          if /usr/libexec/PlistBuddy -c "Print :AutoKekaRepo" "$app/Contents/Info.plist" >/dev/null 2>&1; then
+            echo "release bundle contains the dev repo fallback"; exit 1
+          fi
+          echo "bundle verified"
+
+      - name: Package
+        run: |
+          cd macos/build
+          ditto -c -k --keepParent "Auto-Keka Native.app" ../../Auto-Keka-macos-native.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Auto-Keka-macos-native
+          path: Auto-Keka-macos-native.zip
+
+  release:
+    needs: [build, macos-native]
     # Publish whatever compiled successfully; if nothing did, fail with no
     # release (never fall back to shipping source).
     if: always() && !cancelled()

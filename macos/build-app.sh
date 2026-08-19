@@ -14,6 +14,14 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+# Distinct from the cross-platform Auto-Keka.app on purpose: both install to
+# /Applications, so sharing a name would make it impossible to run the two side
+# by side while the native client is still being evaluated. The bundle ID is
+# already distinct (com.autokeka.mac). To promote this to *the* Mac download,
+# change these two values to "Auto-Keka".
+APP_NAME="Auto-Keka Native"
+APP_DIR_NAME="Auto-Keka Native.app"
+
 CONFIG=debug
 CORE_BIN=""
 while [ $# -gt 0 ]; do
@@ -30,7 +38,7 @@ swift build -c "$CONFIG"
 BIN="$(swift build -c "$CONFIG" --show-bin-path)/AutoKeka"
 [ -x "$BIN" ] || { echo "build produced no binary at $BIN" >&2; exit 1; }
 
-APP="build/Auto-Keka.app"
+APP="build/$APP_DIR_NAME"
 echo "==> assembling $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -51,8 +59,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key>              <string>Auto-Keka</string>
-  <key>CFBundleDisplayName</key>       <string>Auto-Keka</string>
+  <key>CFBundleName</key>              <string>__APP_NAME__</string>
+  <key>CFBundleDisplayName</key>       <string>__APP_NAME__</string>
   <key>CFBundleExecutable</key>        <string>AutoKeka</string>
   <key>CFBundleIdentifier</key>        <string>com.autokeka.mac</string>
   <key>CFBundlePackageType</key>       <string>APPL</string>
@@ -64,6 +72,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+sed -i "" "s/__APP_NAME__/$APP_NAME/g" "$APP/Contents/Info.plist"
 
 # Dev convenience: without a bundled core the app has no way to find the repo
 # when launched from Finder (no inherited environment), so record it. Release

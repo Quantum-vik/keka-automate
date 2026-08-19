@@ -65,6 +65,16 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
+# Dev convenience: without a bundled core the app has no way to find the repo
+# when launched from Finder (no inherited environment), so record it. Release
+# builds bundle a core and never consult this.
+if [ -z "$CORE_BIN" ]; then
+  REPO_ROOT="$(cd .. && pwd)"
+  /usr/libexec/PlistBuddy -c "Add :AutoKekaRepo string $REPO_ROOT" \
+    "$APP/Contents/Info.plist" >/dev/null
+  echo "    dev fallback repo: $REPO_ROOT"
+fi
+
 if [ -f ../packaging/icon.icns ]; then
   cp ../packaging/icon.icns "$APP/Contents/Resources/AppIcon.icns"
   /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" \

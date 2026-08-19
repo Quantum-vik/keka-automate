@@ -687,7 +687,28 @@ def start_remote_server(backend):
 SIDECAR_FILE = os.path.join(kc.DATA_DIR, "sidecar.json")
 
 
-def run_serve(port=0):
+def _exit_when_orphaned(httpd, poll=2.0):
+    """Shut down once our parent goes away (getppid() drops to launchd/init).
+
+    A front-end that crashes, is force-quit, or is SIGKILLed never gets to run
+    its cleanup, so the core cannot rely on being told to stop — it would sit
+    there holding a port and a token forever. Watching the parent covers every
+    one of those cases.
+    """
+    original = os.getppid()
+
+    def watch():
+        while True:
+            time.sleep(poll)
+            current = os.getppid()
+            if current != original or current == 1:
+                httpd.shutdown()          # unblocks serve_forever -> finally
+                return
+
+    threading.Thread(target=watch, daemon=True).start()
+
+
+def run_serve(port=0, exit_with_parent=False):
     """Headless API mode for a native front-end (the Swift macOS client).
 
     Same HTTP + SSE surface the phone remote already speaks, but bound to
@@ -711,6 +732,24 @@ def run_serve(port=0):
 
     # Also emit on stdout so a parent process can read it without polling a file.
     print(json.dumps(info), flush=True)
+
+    # A bare SIGTERM (the front-end quitting, `pkill`, logout) kills the process
+    # without unwinding, so the finally below never runs and a stale handshake
+    # outlives the core. Turn it into a normal shutdown instead.
+    import signal
+
+    def _shutdown(_signum, _frame):
+        raise KeyboardInterrupt
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, _shutdown)
+        except (ValueError, OSError):
+            pass                          # not on the main thread — best effort
+
+    if exit_with_parent:
+        _exit_when_orphaned(httpd)
+
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
@@ -746,12 +785,16 @@ def main():
         keka_check.main()
         return
     if args[:1] == ["--serve"]:
-        # Auto-Keka --serve [port] — headless API for the native macOS client.
+        # Auto-Keka --serve [port] [--exit-with-parent]
+        #   headless API for a native front-end (the Swift macOS client).
+        rest = args[1:]
+        exit_with_parent = "--exit-with-parent" in rest
+        positional = [a for a in rest if not a.startswith("--")]
         try:
-            port = int(args[1]) if len(args) > 1 else 0
+            port = int(positional[0]) if positional else 0
         except ValueError:
-            print(f"invalid port: {args[1]}", file=sys.stderr); sys.exit(2)
-        run_serve(port)
+            print(f"invalid port: {positional[0]}", file=sys.stderr); sys.exit(2)
+        run_serve(port, exit_with_parent=exit_with_parent)
         return
 
     if not os.path.exists(UI_HTML):

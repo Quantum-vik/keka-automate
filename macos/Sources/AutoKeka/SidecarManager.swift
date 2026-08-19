@@ -107,14 +107,25 @@ final class SidecarManager {
     private static func resolveCore() throws -> (URL, [String]) {
         let bundled = Bundle.main.bundleURL
             .appendingPathComponent("Contents/MacOS/auto-keka-core")
+        // --exit-with-parent is not optional in practice: applicationWillTerminate
+        // does not run on SIGKILL, force-quit, or a crash, so without the core
+        // watching us it would be orphaned holding a port and token.
         if FileManager.default.isExecutableFile(atPath: bundled.path) {
-            return (bundled, ["--serve"])
+            return (bundled, ["--serve", "--exit-with-parent"])
         }
-        if let repo = ProcessInfo.processInfo.environment["AUTOKEKA_REPO"] {
+        // Dev fallback: env var first (running from a terminal), then the path
+        // build-app.sh stamps into Info.plist (launched from Finder, where no
+        // environment is inherited).
+        let repoCandidates = [
+            ProcessInfo.processInfo.environment["AUTOKEKA_REPO"],
+            Bundle.main.object(forInfoDictionaryKey: "AutoKekaRepo") as? String,
+        ].compactMap { $0 }
+
+        for repo in repoCandidates {
             let python = URL(fileURLWithPath: repo).appendingPathComponent(".venv/bin/python")
             let script = URL(fileURLWithPath: repo).appendingPathComponent("keka_ui.py")
             if FileManager.default.isExecutableFile(atPath: python.path) {
-                return (python, [script.path, "--serve"])
+                return (python, [script.path, "--serve", "--exit-with-parent"])
             }
         }
         throw SidecarError.coreNotFound

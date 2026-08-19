@@ -34,7 +34,8 @@ def _schedule_installed():
                        for n in ("punchin", "punchout"))
         if sys.platform.startswith("linux"):
             r = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
-            return "keka_punch_in.py" in (r.stdout or "")
+            stdout = r.stdout or ""
+            return ("keka_punch_in.py" in stdout) or ("--punch in" in stdout)
         if sys.platform.startswith("win"):
             r = subprocess.run(["schtasks", "/Query", "/TN", r"Keka\PunchIn"],
                                capture_output=True, text=True)

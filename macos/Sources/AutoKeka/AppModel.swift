@@ -22,6 +22,8 @@ final class AppModel: ObservableObject {
     }
 
     private let sidecar = SidecarManager()
+    private let notifications = NotificationManager()
+    private var transitions = PunchTransition()
     private var client: KekaClient?
     private var listenTask: Task<Void, Never>?
     private var tickTask: Task<Void, Never>?
@@ -33,6 +35,7 @@ final class AppModel: ObservableObject {
     func start() {
         guard !started else { return }   // delegate owns startup; never double-run
         started = true
+        Task { await notifications.requestAuthorization() }
         tickTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
@@ -58,7 +61,7 @@ final class AppModel: ObservableObject {
                 let client = KekaClient(info: info)
                 self.client = client
                 let snapshot = try await client.fetchState()
-                self.state = snapshot
+                self.apply(snapshot)
                 self.connection = .connected
                 await self.listen(client)
             } catch {
@@ -78,12 +81,14 @@ final class AppModel: ObservableObject {
             for try await event in await client.events() {
                 switch event {
                 case .state(let s):
-                    state = s
+                    apply(s)
                 case .otpRequired(let retry):
                     otpRequired = true
                     otpIsRetry = retry
+                    emitNotifications()
                 case .otpDone:
                     otpRequired = false
+                    emitNotifications()
                 case .log(let msg):
                     lastLog = msg
                 }
@@ -98,14 +103,52 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: - State application
+
+    private func apply(_ newState: KekaState) {
+        state = newState
+        emitNotifications()
+    }
+
+    /// The first evaluation after launch only seeds the baseline — otherwise
+    /// every app start would announce a punch that happened hours ago.
+    private func emitNotifications() {
+        for event in transitions.evaluate(state: state, otpRequired: otpRequired) {
+            switch event {
+            case .clockedIn(let at):
+                notifications.post(title: "Clocked in",
+                                   body: "Auto-Keka clocked you in at \(at).")
+            case .clockedOut(let at):
+                notifications.post(title: "Clocked out",
+                                   body: "Auto-Keka clocked you out at \(at).")
+            case .otpNeeded:
+                // The one case that genuinely blocks automation until a human
+                // acts, so it gets a sound.
+                notifications.post(title: "Keka needs a code",
+                                   body: "Enter the code Keka emailed you to finish signing in.",
+                                   sound: true)
+            }
+        }
+    }
+
     // MARK: - Actions
 
     func clockIn()         { run("clock_in") }
     func clockOut()        { run("clock_out") }
-    func refreshSession()  { run("refresh_session") }
+    // The HTTP route is /api/refresh even though the Backend method is
+    // refresh_session() — the pywebview bridge and the HTTP API differ here.
+    func refreshSession()  { run("refresh") }
 
     func submitOTP(_ code: String) {
         run("submit_otp", body: ["code": code])
+    }
+
+    func saveCredentials(_ payload: [String: Any]) {
+        run("save_creds", body: payload)
+    }
+
+    func applySchedule(_ payload: [String: Any]) {
+        run("apply_schedule", body: payload)
     }
 
     private func run(_ action: String, body: [String: Any]? = nil) {

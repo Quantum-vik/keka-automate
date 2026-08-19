@@ -102,7 +102,20 @@ struct MenuBarView: View {
 
     private var footer: some View {
         HStack {
-            Button("Open Window") { openWindow(id: "main") }
+            Button("Open Window") {
+                openWindow(id: "main")
+                // LSUIElement apps do not take focus on their own, so the
+                // window would otherwise open behind whatever is in front.
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            Button("Settings…") {
+                // Renamed in macOS 14; the deployment target is 13, so try the
+                // modern selector and fall back rather than silently no-op.
+                if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
+                    NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+                }
+                NSApp.activate(ignoringOtherApps: true)
+            }
             Spacer()
             Button("Quit") { NSApplication.shared.terminate(nil) }
         }

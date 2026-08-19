@@ -39,6 +39,10 @@ struct AutoKekaApp: App {
                 .frame(minWidth: 460, minHeight: 520)
         }
         .windowResizability(.contentMinSize)
+
+        Settings {
+            SettingsView(model: delegate.model)
+        }
     }
 }
 

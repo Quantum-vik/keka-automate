@@ -46,10 +46,10 @@
   .lights { display:flex; gap:8px; align-items:center; }
   .lights i { width:12px; height:12px; border-radius:50%; border:.5px solid rgba(0,0,0,.08); display:block; }
   .brand { flex:1; display:flex; align-items:center; justify-content:center; gap:9px; }
-  .logo { width:26px; height:26px; border-radius:8px; background:linear-gradient(145deg,#14c2a5,#0a8d7b);
+  .logo { width:26px; height:26px; border-radius:var(--r-sm); background:linear-gradient(145deg,#14c2a5,#0a8d7b);
     display:flex; align-items:center; justify-content:center; box-shadow:0 2px 6px rgba(8,120,105,.4), inset 0 1px 0 rgba(255,255,255,.4); }
   .brand span { font-size:14px; font-weight:600; letter-spacing:-.01em; color:var(--ink); }
-  .autopill { display:flex; align-items:center; gap:7px; padding:5px 11px; border-radius:999px;
+  .autopill { display:flex; align-items:center; gap:7px; padding:5px 11px; border-radius:var(--r-full);
     background:rgba(23,182,122,.12); border:.5px solid rgba(23,182,122,.25); }
   .autopill i { width:7px; height:7px; border-radius:50%; background:var(--present); }
   .autopill span { font-size:11.5px; font-weight:600; color:#0b7d54; }
@@ -76,10 +76,10 @@
   .bar-legend { display:flex; justify-content:space-between; margin-top:7px; font-size:11.5px; font-weight:500; color:rgba(18,51,46,.45); }
 
   /* actions */
-  .actions { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
-  .btn { cursor:pointer; display:flex; align-items:center; justify-content:center; gap:9px; height:52px; border-radius:15px;
+  .actions { display:grid; grid-template-columns:1fr 1fr 1fr; gap:var(--sp-3); }
+  .btn { cursor:pointer; display:flex; align-items:center; justify-content:center; gap:9px; height:52px; border-radius:var(--r-md);
     background:rgba(255,255,255,.58); border:.5px solid var(--glass-border);
-    box-shadow:0 6px 20px rgba(6,60,50,.10), inset 0 1px 0 rgba(255,255,255,.6); transition:background .15s ease; }
+    box-shadow:var(--elev-card), var(--hairline); transition:background .15s ease; }
   .btn:hover { background:rgba(255,255,255,.82); }
   .btn:active { transform:translateY(1px); }
   .btn:focus-visible, .save:focus-visible, .wbtn:focus-visible, .iconbtn:focus-visible,
@@ -96,18 +96,19 @@
   .btn i { width:9px; height:9px; border-radius:50%; }
   .btn span { font-size:14px; font-weight:600; color:var(--ink); }
 
-  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
-  .card .head { display:flex; align-items:center; gap:8px; margin-bottom:16px; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:var(--sp-4); }
+  .card .head { display:flex; align-items:center; gap:var(--sp-2); margin-bottom:var(--sp-4); }
   .card .head i { width:8px; height:8px; border-radius:50%; }
-  .big { font-size:22px; font-weight:650; letter-spacing:-.02em; color:var(--ink); }
-  .card .meta { font-size:13.5px; font-weight:500; color:var(--ink-2); margin:2px 0 14px; }
-  .pill { display:inline-flex; align-items:baseline; gap:6px; padding:7px 13px; border-radius:12px; background:rgba(15,169,142,.10); white-space:nowrap; }
+  .big { font-size:20px; font-weight:650; letter-spacing:-.02em; color:var(--ink); }
+  .card .meta { font-size:13.5px; font-weight:500; color:var(--ink-2); margin:var(--sp-1) 0 var(--sp-3); }
+  .pill { display:inline-flex; align-items:baseline; gap:6px; padding:7px 13px; border-radius:var(--r-sm); background:rgba(15,169,142,.10); white-space:nowrap; }
   .pill b { font-family:var(--mono); font-size:19px; font-weight:600; color:var(--teal-600); }
   .pill em { font-size:12px; font-weight:500; color:rgba(18,51,46,.5); font-style:normal; }
 
   /* week */
-  .week { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; }
-  .day { border-radius:14px; padding:12px 12px 13px; background:rgba(255,255,255,.45); border:.5px solid rgba(255,255,255,.6); }
+  .week { display:grid; grid-template-columns:repeat(5,1fr); gap:var(--sp-2); }
+  .day { border-radius:var(--r-md); padding:var(--sp-3) var(--sp-3) 13px; background:rgba(255,255,255,.45); border:.5px solid rgba(255,255,255,.6);
+    box-shadow:var(--elev-card), var(--hairline); }
   .day.today { background:rgba(15,169,142,.13); border:1px solid rgba(15,169,142,.4); }
   .day .d { font-size:12px; font-weight:600; color:var(--ink); margin-bottom:2px; }
   .day.today .d { color:var(--teal-600); }
@@ -149,8 +150,8 @@
   #otp button { height:44px; padding:0 18px; border:none; border-radius:12px; background:var(--teal-600); color:#fff; font-weight:600; font-size:14px; cursor:pointer; }
 
   /* ── title-bar icon button (gear) ─────────────────────────────────────── */
-  .iconbtn { width:30px; height:30px; border-radius:9px; display:flex; align-items:center; justify-content:center; cursor:pointer;
-    background:rgba(255,255,255,.5); border:.5px solid var(--glass-border); box-shadow:inset 0 1px 0 rgba(255,255,255,.6); transition:background .15s ease; }
+  .iconbtn { width:30px; height:30px; border-radius:var(--r-sm); display:flex; align-items:center; justify-content:center; cursor:pointer;
+    background:rgba(255,255,255,.5); border:.5px solid var(--glass-border); box-shadow:var(--elev-card), var(--hairline); transition:background .15s ease; }
   .iconbtn:hover { background:rgba(255,255,255,.85); }
 
   /* ── settings sheet ───────────────────────────────────────────────────── */

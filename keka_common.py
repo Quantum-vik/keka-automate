@@ -24,7 +24,7 @@ import base64
 import logging
 import tempfile
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
 
 from PIL import Image
@@ -84,6 +84,8 @@ def _app_data_dir():
 DATA_DIR     = _app_data_dir()
 SESSION_FILE = os.path.join(DATA_DIR, "session.json")
 SESSION_LOCK_FILE = os.path.join(DATA_DIR, "session.lock")
+TIMEOFF_FILE = os.path.join(DATA_DIR, "timeoff.json")
+PAUSE_FILE   = os.path.join(DATA_DIR, "paused.flag")
 ENV_FILE     = os.path.join(DATA_DIR, ".env")
 LOG_DIR      = os.path.join(DATA_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -853,6 +855,172 @@ def read_history(n=200):
     return out[-n:]
 
 
+# ── Time off: holidays / planned leave — auto-punch skips these dates ─────────
+# Stored as a small JSON list in DATA_DIR: [{date:"YYYY-MM-DD", kind, note}].
+def _valid_date(s):
+    try:
+        datetime.strptime(str(s).strip(), "%Y-%m-%d")
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def load_timeoff():
+    """Return the saved time-off entries (list of dicts), oldest date first.
+    Never raises — a missing/corrupt file yields []."""
+    try:
+        with open(TIMEOFF_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        entries = [e for e in data
+                   if isinstance(e, dict) and _valid_date(e.get("date"))]
+        entries.sort(key=lambda e: e["date"])
+        return entries
+    except (OSError, ValueError):
+        return []
+
+
+def save_timeoff(entries):
+    """Validate, de-dupe by date, sort, and persist. Returns the cleaned list."""
+    clean, seen = [], set()
+    for e in entries or []:
+        d = str((e or {}).get("date", "")).strip()
+        if not _valid_date(d) or d in seen:
+            continue
+        seen.add(d)
+        kind = (e.get("kind") or "leave").strip().lower()
+        if kind not in ("leave", "holiday", "wfh"):
+            kind = "leave"
+        clean.append({"date": d, "kind": kind, "note": str(e.get("note") or "")[:80]})
+    clean.sort(key=lambda e: e["date"])
+    tmp = TIMEOFF_FILE + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(clean, f)
+        os.replace(tmp, TIMEOFF_FILE)
+    except OSError:
+        pass
+    return clean
+
+
+def is_timeoff(date_str):
+    """The matching time-off entry for a YYYY-MM-DD date, or None. Fail-open:
+    any error returns None so a broken file can never block a real punch."""
+    try:
+        for e in load_timeoff():
+            if e.get("date") == date_str:
+                return e
+    except Exception:
+        pass
+    return None
+
+
+# ── Pause switch: auto-punch no-ops while paused (a user kill-switch) ──────────
+def is_paused():
+    """True if automation is paused. Fail-open: errors read as NOT paused, so a
+    filesystem glitch never silently stops your punches."""
+    try:
+        return os.path.exists(PAUSE_FILE)
+    except OSError:
+        return False
+
+
+def set_paused(paused):
+    try:
+        if paused:
+            with open(PAUSE_FILE, "w", encoding="utf-8") as f:
+                f.write(datetime.now().isoformat())
+            os.chmod(PAUSE_FILE, 0o600)
+        elif os.path.exists(PAUSE_FILE):
+            os.remove(PAUSE_FILE)
+        return True
+    except OSError:
+        return False
+
+
+# ── Attendance stats + CSV export (derived from history.jsonl) ────────────────
+def _hhmm_to_min(s):
+    try:
+        h, m = str(s).strip().split(":")[:2]
+        return int(h) * 60 + int(m)
+    except (ValueError, AttributeError):
+        return None
+
+
+def day_punches(history):
+    """Collapse history into date -> {'in': first-in HH:MM, 'out': last-out HH:MM}."""
+    days = {}
+    for h in history or []:
+        d, k, t = h.get("date"), h.get("kind"), h.get("time")
+        if not d or k not in ("in", "out"):
+            continue
+        slot = days.setdefault(d, {"in": None, "out": None})
+        if k == "in" and slot["in"] is None:
+            slot["in"] = t
+        elif k == "out":
+            slot["out"] = t
+    return days
+
+
+def attendance_stats(history, schedule_in="09:00", now=None):
+    """Worked-time rollups for the current ISO week and calendar month.
+    Pure over (history, schedule_in, now). 5-minute grace before 'late'.
+    Returns {"week": {...}, "month": {...}} with days/minutes/late each."""
+    now = now or datetime.now()
+    sched = _hhmm_to_min(schedule_in) or 540
+    week_start = now.date() - timedelta(days=now.weekday())
+    month_key = now.strftime("%Y-%m")
+    week = {"days": 0, "minutes": 0, "late": 0}
+    month = {"days": 0, "minutes": 0, "late": 0}
+    for d, slot in day_punches(history).items():
+        try:
+            dd = datetime.strptime(d, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        in_m, out_m = _hhmm_to_min(slot["in"]), _hhmm_to_min(slot["out"])
+        worked = out_m - in_m if (in_m is not None and out_m is not None and out_m > in_m) else 0
+        present = in_m is not None
+        late = present and in_m > sched + 5
+        if week_start <= dd <= now.date():
+            week["days"] += present
+            week["minutes"] += worked
+            week["late"] += late
+        if d.startswith(month_key):
+            month["days"] += present
+            month["minutes"] += worked
+            month["late"] += late
+    return {"week": week, "month": month}
+
+
+def history_to_csv(history):
+    """One row per day: Date, Clock In, Clock Out, Worked (H:MM)."""
+    import csv
+    import io as _io
+    buf = _io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Date", "Clock In", "Clock Out", "Worked"])
+    for d in sorted(day_punches(history)):
+        slot = day_punches(history)[d]
+        in_m, out_m = _hhmm_to_min(slot["in"]), _hhmm_to_min(slot["out"])
+        worked = ""
+        if in_m is not None and out_m is not None and out_m > in_m:
+            mins = out_m - in_m
+            worked = f"{mins // 60}:{mins % 60:02d}"
+        w.writerow([d, slot["in"] or "", slot["out"] or "", worked])
+    return buf.getvalue()
+
+
+def export_history_csv(dest_dir=None):
+    """Write the full attendance history to a CSV. Prefers ~/Desktop, falls
+    back to DATA_DIR. Returns the written path."""
+    if not dest_dir:
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        dest_dir = desktop if os.path.isdir(desktop) else DATA_DIR
+    path = os.path.join(dest_dir, f"auto-keka-attendance-{datetime.now():%Y%m%d}.csv")
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(history_to_csv(read_history(1_000_000)))
+    return path
+
+
 # ── Session health (real token expiry, not elapsed-time guessing) ─────────────
 def _jwt_exp(token):
     """The 'exp' claim (unix seconds) of a JWT, decoded WITHOUT verification —
@@ -1079,6 +1247,22 @@ def run_punch(action, log_file):
     log = get_logger(log_file)
     label = "In" if action == "in" else "Out"
     log.info("=== Keka Punch-%s started ===", label)
+
+    # Kill-switch and time-off gates run BEFORE anything else and are fail-open
+    # (is_paused/is_timeoff swallow errors → punch proceeds), so a bad flag or a
+    # corrupt timeoff.json can never wrongly BLOCK a punch — only a deliberate
+    # entry does. Skips are logged as neutral history, not failures.
+    today = datetime.now().strftime("%Y-%m-%d")
+    if is_paused():
+        log.info("Automation paused — skipping punch-%s", label)
+        log_history("info", f"Auto clock-{action} skipped — automation paused")
+        return
+    off = is_timeoff(today)
+    if off:
+        why = off.get("kind", "leave")
+        log.info("Time off today (%s) — skipping punch-%s", why, label)
+        log_history("info", f"Auto clock-{action} skipped — {why} day")
+        return
 
     if not EMAIL or not PASSWORD:
         punch_failed(action, log,

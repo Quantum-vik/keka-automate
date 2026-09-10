@@ -133,6 +133,10 @@ class Backend:
             "activity": activity,
             "depsReady": kc.deps_ready(),
             "onboarded": onboarded,
+            "paused": kc.is_paused(),
+            "timeoff": kc.load_timeoff(),
+            "todayOff": kc.is_timeoff(datetime.now().strftime("%Y-%m-%d")),
+            "stats": kc.attendance_stats(hist, env.get("KEKA_IN_TIME", "09:00")),
             "config": {"url": env.get("KEKA_BASE_URL", ""), "email": env.get("KEKA_EMAIL", ""),
                        "configured": configured},
         }
@@ -291,6 +295,47 @@ class Backend:
         kc.log_history("info", f"Schedule set · in {it}, out {ot}")
         self.push_state()
         return {"ok": rc == 0}
+
+    # ── time off (holidays / planned leave) ──────────────────────────────────
+    def get_timeoff(self):
+        return {"ok": True, "entries": kc.load_timeoff()}
+
+    def add_timeoff(self, obj):
+        obj = obj or {}
+        date = (obj.get("date") or "").strip()
+        if not kc._valid_date(date):
+            return {"ok": False, "message": "Pick a valid date (YYYY-MM-DD)."}
+        entries = kc.load_timeoff() + [{"date": date,
+                                        "kind": obj.get("kind") or "leave",
+                                        "note": obj.get("note") or ""}]
+        saved = kc.save_timeoff(entries)
+        kc.log_history("info", f"Time off added · {date} ({obj.get('kind') or 'leave'})")
+        self.push_state()
+        return {"ok": True, "entries": saved}
+
+    def remove_timeoff(self, obj):
+        date = ((obj or {}).get("date") or "").strip()
+        saved = kc.save_timeoff([e for e in kc.load_timeoff() if e.get("date") != date])
+        self.push_state()
+        return {"ok": True, "entries": saved}
+
+    # ── pause / resume automation ────────────────────────────────────────────
+    def set_pause(self, obj):
+        paused = bool((obj or {}).get("paused"))
+        kc.set_paused(paused)
+        kc.log_history("info", "Automation paused" if paused else "Automation resumed")
+        self.push_state()
+        return {"ok": True, "paused": kc.is_paused()}
+
+    # ── attendance export ────────────────────────────────────────────────────
+    def export_csv(self):
+        try:
+            path = kc.export_history_csv()
+            self.push_log(f"Attendance exported to {path}", "in")
+            kc.log_history("info", "Attendance exported to CSV")
+            return {"ok": True, "path": path}
+        except Exception as e:
+            return {"ok": False, "message": str(e)}
 
     # ── internals ────────────────────────────────────────────────────────────
     def _otp_getter(self, retry=False):
@@ -479,6 +524,11 @@ class Api:
     def finish_onboarding(self): return self._b.finish_onboarding()
     def activate_license(self, key): return self._b.activate_license(key)
     def remote_info(self):      return self._b.remote_info()
+    def get_timeoff(self):      return self._b.get_timeoff()
+    def add_timeoff(self, obj): return self._b.add_timeoff(obj)
+    def remove_timeoff(self, obj): return self._b.remove_timeoff(obj)
+    def set_pause(self, obj):   return self._b.set_pause(obj)
+    def export_csv(self):       return self._b.export_csv()
 
     # frameless-window controls (the design draws its own traffic lights)
     def win_close(self):
@@ -533,7 +583,10 @@ _SHIM = """
     refresh_session:()=>post('/api/refresh'), submit_otp:(c)=>post('/api/submit_otp',{code:c}),
     save_creds:(o)=>post('/api/save_creds',o), apply_schedule:(o)=>post('/api/apply_schedule',o),
     install_deps:()=>post('/api/install_deps'), finish_onboarding:()=>post('/api/finish_onboarding'),
-    activate_license:(k)=>post('/api/activate_license',{key:k}), remote_info:()=>post('/api/remote_info')}};
+    activate_license:(k)=>post('/api/activate_license',{key:k}), remote_info:()=>post('/api/remote_info'),
+    get_timeoff:()=>post('/api/get_timeoff'), add_timeoff:(o)=>post('/api/add_timeoff',o),
+    remove_timeoff:(o)=>post('/api/remove_timeoff',o), set_pause:(o)=>post('/api/set_pause',o),
+    export_csv:()=>post('/api/export_csv')}};
   try{const es=new EventSource('/events');es.onmessage=(e)=>{const m=JSON.parse(e.data),K=window.KekaUI||{};
     if(m.type==='log'&&K.onLog)K.onLog(m.entry);else if(m.type==='state'&&K.onState)K.onState(m.state);
     else if(m.type==='otp'&&K.onOtpRequired)K.onOtpRequired(m.retry);else if(m.type==='otpDone'&&K.onOtpDone)K.onOtpDone();};}catch(_){}
@@ -630,7 +683,12 @@ def _serve_http(backend, host, port, token):
                       "/api/install_deps": lambda: backend.install_deps(),
                       "/api/finish_onboarding": lambda: backend.finish_onboarding(),
                       "/api/remote_info": lambda: backend.remote_info(),
-                      "/api/activate_license": lambda: backend.activate_license(body.get("key"))}
+                      "/api/activate_license": lambda: backend.activate_license(body.get("key")),
+                      "/api/get_timeoff": lambda: backend.get_timeoff(),
+                      "/api/add_timeoff": lambda: backend.add_timeoff(body),
+                      "/api/remove_timeoff": lambda: backend.remove_timeoff(body),
+                      "/api/set_pause": lambda: backend.set_pause(body),
+                      "/api/export_csv": lambda: backend.export_csv()}
             fn = routes.get(route)
             if not fn: self.send_error(404); return
             try: self._json(fn())

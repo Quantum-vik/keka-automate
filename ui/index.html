@@ -228,8 +228,19 @@
     border:.5px solid rgba(232,147,60,.32); box-shadow:var(--hairline); }
   .banner.paused { background:linear-gradient(135deg,rgba(120,120,130,.16),rgba(120,120,130,.07));
     border-color:rgba(120,120,130,.34); }
+  .banner.update { background:linear-gradient(135deg,rgba(15,169,142,.18),rgba(15,169,142,.06));
+    border-color:rgba(15,169,142,.34); }
   .banner-ico { font-size:20px; line-height:1; }
   .banner-txt { font-size:13.5px; font-weight:600; color:var(--ink); }
+  .banner .save { height:32px; padding:0 15px; margin:0; flex-shrink:0; }
+
+  /* settings footer: version + check-for-updates */
+  .app-foot { display:flex; align-items:center; justify-content:space-between; gap:12px;
+    margin-top:20px; padding-top:14px; border-top:.5px solid rgba(6,60,50,.1); }
+  .app-foot .ver { font-size:12px; color:var(--ink-3); }
+  .app-foot .chk { font-size:12.5px; font-weight:600; color:var(--teal-600); background:none;
+    border:none; cursor:pointer; padding:0; }
+  .app-foot .chk:hover { color:var(--teal-500); }
 
   /* ── attendance stats (4-up numbers) ───────────────────────────────────── */
   .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:var(--sp-3); }
@@ -359,6 +370,8 @@
     .tf-row .tf-x:hover { background:rgba(220,90,70,.28); color:#ffb4a2; }
     .banner { background:linear-gradient(135deg,rgba(232,147,60,.2),rgba(232,147,60,.08)); border-color:rgba(232,147,60,.36); }
     .banner.paused { background:linear-gradient(135deg,rgba(150,150,160,.16),rgba(150,150,160,.07)); border-color:rgba(160,160,170,.3); }
+    .banner.update { background:linear-gradient(135deg,rgba(45,212,168,.18),rgba(45,212,168,.06)); border-color:rgba(45,212,168,.34); }
+    .app-foot { border-top-color:rgba(255,255,255,.1); }
     .wsteps i { background:rgba(255,255,255,.15); }
     .wnote { color:#8fd8c6; }
     #toast { background:rgba(230,242,238,.95); color:#0f2c26; box-shadow:0 10px 30px rgba(0,0,0,.5); }
@@ -431,6 +444,13 @@
 
     <div id="content">
       <!-- OFF-DAY BANNER (leave / holiday / paused — auto-punch is skipped) -->
+      <!-- UPDATE BANNER (a newer release is available) -->
+      <div id="updateBanner" class="banner update" style="display:none">
+        <span class="banner-ico">⬆️</span>
+        <span class="banner-txt" id="updateText">—</span>
+        <button class="save" id="updateBtn" style="margin-left:auto">Download</button>
+      </div>
+
       <div id="offBanner" class="banner" style="display:none">
         <span class="banner-ico" id="offIco">🌴</span>
         <span class="banner-txt" id="offText">—</span>
@@ -594,6 +614,11 @@
             <button class="save ghost" id="exportBtn">Export attendance (CSV)</button>
           </div>
         </div>
+
+        <div class="app-foot">
+          <span class="ver" id="appVer">Auto-Keka</span>
+          <button class="chk" id="checkUpdateBtn">Check for updates</button>
+        </div>
       </div>
     </div>
 
@@ -720,6 +745,10 @@ const MOCK = {
   paused: false,
   timeoff: [],   // filled by buildMockTimeoff() below
   stats: { week: { days: 4, minutes: 2043, late: 1 }, month: { days: 16, minutes: 8112, late: 3 } },
+  version: "1.0.2",
+  // preview shows the banner so the design is visible; the real app is usually current
+  update: { available: true, current: "1.0.2", latest: "1.1.0",
+            url: "https://github.com/Quantum-vik/keka-automate/releases/latest", notes: "" },
 };
 
 /* remote (browser/phone) mode: drop the fake macOS window chrome */
@@ -739,6 +768,8 @@ const api = {
   async addTimeoff(o)   { return hasBridge() ? window.pywebview.api.add_timeoff(o)   : mockAddTimeoff(o); },
   async removeTimeoff(d){ return hasBridge() ? window.pywebview.api.remove_timeoff({date:d}) : mockRemoveTimeoff(d); },
   async exportCsv()     { return hasBridge() ? window.pywebview.api.export_csv()     : { ok:true, path:"(preview) ~/Desktop/auto-keka-attendance.csv" }; },
+  async checkUpdate()   { return hasBridge() ? window.pywebview.api.check_update()   : { ok:true, update:(STATE&&STATE.update)||{available:false} }; },
+  async openRelease(url){ return hasBridge() ? window.pywebview.api.open_release({url}) : (window.open(url,"_blank"), {ok:true}); },
 };
 
 /* ── Python → JS callbacks (Python calls these via window.evaluate_js) ─────── */
@@ -774,6 +805,7 @@ function normalize(s) {
   if (!s.stats)   s.stats   = hasBridge() ? {week:{days:0,minutes:0,late:0},month:{days:0,minutes:0,late:0}}
                                           : (MOCK.stats || {week:{days:0,minutes:0,late:0},month:{days:0,minutes:0,late:0}});
   if (s.paused === undefined) s.paused = false;
+  if (!s.update) s.update = { available:false, current:s.version||"", latest:null, url:"", notes:"" };
   return s;
 }
 
@@ -851,6 +883,7 @@ function render() {
   renderWeek(STATE.week);
   renderFeed(STATE.activity);
   renderStats(STATE.stats);
+  renderUpdateBanner();
   renderOffBanner();
   renderPausePill();
   applyGates();
@@ -911,6 +944,17 @@ function renderStats(st){
 }
 
 /* ── off-day banner (leave / holiday / paused — auto-punch skipped) ─────────*/
+/* ── update banner (a newer release is available) ───────────────────────────*/
+function renderUpdateBanner(){
+  const u = STATE.update || {}, b = $("#updateBanner");
+  if (u.available && u.latest){
+    b.style.display = "flex";
+    $("#updateText").textContent = `Version ${u.latest} is available — you have ${u.current}.`;
+  } else {
+    b.style.display = "none";
+  }
+}
+
 function renderOffBanner(){
   const b = $("#offBanner");
   if (STATE.paused){
@@ -1241,8 +1285,15 @@ function openSettings(){
   loadRemoteInfo();
   renderTimeoff();
   renderPauseCtl();
+  renderVersion();
   if (!$("#toDate").value) $("#toDate").value = new Date(vnow()).toISOString().slice(0,10);
   $("#settings").classList.add("show");
+}
+/* settings footer version line */
+function renderVersion(){
+  const u = (STATE && STATE.update) || {}, v = (STATE && STATE.version) || u.current || "";
+  $("#appVer").textContent = "Auto-Keka" + (v ? ` v${v}` : "")
+    + (u.available && u.latest ? ` · v${u.latest} available` : "");
 }
 /* pause row inside settings (mirrors the titlebar pill) */
 function renderPauseCtl(){
@@ -1338,6 +1389,19 @@ $("#exportBtn").addEventListener("click", async () => {
     if (r && r.ok){ $("#exportTag").textContent = "Saved to " + (r.path||"Desktop"); toast("Attendance exported"); }
     else { toast((r && r.message) || "Export failed", true); }
   } finally { b.disabled = false; b.textContent = orig; }
+});
+
+/* ── software update ────────────────────────────────────────────────────────*/
+$("#updateBtn").addEventListener("click", () => api.openRelease((STATE.update||{}).url));
+$("#checkUpdateBtn").addEventListener("click", async () => {
+  const b = $("#checkUpdateBtn"); b.disabled = true; b.textContent = "Checking…";
+  try {
+    const r = await api.checkUpdate();
+    const u = (r && r.update) || (STATE && STATE.update) || {};
+    if (STATE) STATE.update = u;
+    render(); renderVersion();
+    toast(u.available ? `Update available: v${u.latest}` : "You're on the latest version");
+  } finally { b.disabled = false; b.textContent = "Check for updates"; }
 });
 
 /* pywebview injects window.pywebview AFTER the page's scripts run — loading

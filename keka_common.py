@@ -56,6 +56,12 @@ if _tess:
 # ── Config ────────────────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Single source of truth for the app version. release.yml reads THIS for the
+# Nuitka product-version, and the in-app update check compares it against the
+# latest GitHub release tag — so bumping this one line is what a release needs.
+APP_VERSION = "1.0.2"
+GITHUB_REPO = "Quantum-vik/keka-automate"
+
 # True when running as a Nuitka-compiled binary (no source tree, no venv).
 # Frozen mode dispatches punches through `<binary> --punch` and installs the
 # schedule natively instead of via the repo's shell scripts.
@@ -1019,6 +1025,63 @@ def export_history_csv(dest_dir=None):
     with open(path, "w", encoding="utf-8", newline="") as f:
         f.write(history_to_csv(read_history(1_000_000)))
     return path
+
+
+# ── Update check (compare our version to the latest GitHub release) ───────────
+# The Python analog of electron-updater: poll /releases/latest, semver-compare,
+# and surface a "download" prompt. We do NOT self-replace the running binary
+# (unsafe for a compiled one-file app) — we point the user at the release page.
+RELEASES_PAGE = f"https://github.com/{GITHUB_REPO}/releases/latest"
+
+
+def _semver_tuple(s):
+    """('1.2.10') -> (1, 2, 10). Missing/garbage parts become 0; a trailing
+    pre-release suffix (1.2.0-rc.1) is dropped for the numeric compare."""
+    core = str(s or "").strip().lstrip("vV").split("-")[0].split("+")[0]
+    parts = []
+    for p in core.split(".")[:3]:
+        try:
+            parts.append(int(p))
+        except ValueError:
+            parts.append(0)
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts)
+
+
+def _is_newer(candidate, current):
+    """True if version string `candidate` is strictly newer than `current`."""
+    return _semver_tuple(candidate) > _semver_tuple(current)
+
+
+def check_for_update(current=None, timeout=6):
+    """Ask GitHub for the latest NON-prerelease and compare to our version.
+    Pure network read — never raises. Returns:
+      {available, current, latest, url, notes}
+    with available=False (and latest=None) on any error, no release, or when
+    we're already current. Pre-releases are skipped (the release pipeline tags
+    them with a '-' suffix and marks them prerelease)."""
+    current = current or APP_VERSION
+    out = {"available": False, "current": current, "latest": None,
+           "url": RELEASES_PAGE, "notes": ""}
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
+            headers={"Accept": "application/vnd.github+json",
+                     "User-Agent": f"Auto-Keka/{current}"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        if data.get("prerelease") or data.get("draft"):
+            return out
+        tag = data.get("tag_name") or ""
+        out["latest"] = tag.lstrip("vV")
+        out["url"] = data.get("html_url") or RELEASES_PAGE
+        out["notes"] = (data.get("body") or "")[:2000]
+        out["available"] = _is_newer(tag, current)
+    except Exception:
+        pass   # offline / rate-limited / no release yet — stay silent
+    return out
 
 
 # ── Session health (real token expiry, not elapsed-time guessing) ─────────────

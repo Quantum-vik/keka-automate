@@ -31,6 +31,11 @@ import license as lic
 UI_HTML = os.path.join(kc.SCRIPT_DIR, "ui", "index.html")
 VENV_PY = sys.executable
 
+# How long a sign-in waits for the user to type the emailed OTP before giving
+# up. Bounded because the wait happens while holding _pw_lock: an abandoned
+# prompt (window closed, phone tab gone) must not stall the backend forever.
+OTP_WAIT_SECS = 300
+
 
 # ─── Backend: all state + actions, push-mechanism-agnostic (self.emit) ────────
 class Backend:
@@ -82,12 +87,13 @@ class Backend:
             try:
                 with self._pw_lock:
                     s = kc.get_status()
-                if s:
+                if s in ("in", "out"):
                     self._status, self._alive = s, True
-                else:
-                    # Probe ran but we're not inside the app: the session is dead
-                    # if a session file exists, unknown if there is none at all.
-                    self._alive = False if os.path.exists(kc.SESSION_FILE) else None
+                elif s == "dead":
+                    # Definitive: the probe was bounced to the login flow.
+                    self._alive = False
+                # None = transient/unknown (SPA settling, maintenance page) —
+                # keep the previous verdict instead of flashing "Session expired".
                 self.push_state()
             except Exception:
                 pass   # deps missing / browser failed — leave verdict unchanged
@@ -226,8 +232,13 @@ class Backend:
                 kc.log_history("info", "Session refreshed")
             try:
                 s = kc.get_status()
-                if s:
+                if s in ("in", "out"):
                     self._status, self._alive = s, True
+                    # The login flow may have bailed (e.g. cancelled OTP) while
+                    # the existing session is in fact alive — report the truth.
+                    ok = True
+                elif s == "dead":
+                    self._alive = False
             except Exception:
                 pass
         self.push_state()
@@ -285,7 +296,10 @@ class Backend:
     def _otp_getter(self, retry=False):
         self.emit({"type": "otp", "retry": bool(retry)})
         self._otp_event.clear()
-        self._otp_event.wait()
+        if not self._otp_event.wait(timeout=OTP_WAIT_SECS):
+            self.emit({"type": "otpDone"})   # retract the now-stale prompt
+            self.push_log("No OTP entered in 5 minutes — sign-in cancelled", "out")
+            return None                      # interactive_login treats None as cancel
         return self._otp_value
 
     def _today_punches(self, hist):
@@ -355,10 +369,9 @@ class Backend:
                 self._alive = True   # punch reached Keka — session verified live
             try:
                 s = kc.get_status()
-                self._status = s or self._status
-                if s:
-                    self._alive = True
-                elif rc != 0 and os.path.exists(kc.SESSION_FILE):
+                if s in ("in", "out"):
+                    self._status, self._alive = s, True
+                elif s == "dead" and rc != 0:
                     self._alive = False
             except Exception:
                 pass

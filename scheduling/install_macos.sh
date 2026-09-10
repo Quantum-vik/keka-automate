@@ -66,9 +66,14 @@ weekdays() {  # $1=hour  $2=minute
 
 make_plist "com.keka.punchin"  "keka_punch_in.py"  "keka_punch_in.log"  "$(weekdays "$IN_H" "$IN_M")"  ""
 make_plist "com.keka.punchout" "keka_punch_out.py" "keka_punch_out.log" "$(weekdays "$OUT_H" "$OUT_M")" ""
+# Reauth cadence: the 10:00 calendar beat alone once missed a whole expiry
+# window (machine asleep at 10:00 every day for a week → cookie lapsed with
+# zero warnings). StartInterval fires every 6h of uptime regardless of the
+# clock, and RunAtLoad covers login — three overlapping chances instead of one.
 make_plist "com.keka.reauth"   "keka_check.py"     "keka_reauth.log" \
     "<dict><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>" \
-    "<key>RunAtLoad</key><true/>"
+    "<key>RunAtLoad</key><true/>
+    <key>StartInterval</key><integer>21600</integer>"
 
 for f in punchin punchout reauth; do
     launchctl bootout   "gui/$UID_NUM/com.keka.$f" 2>/dev/null || true

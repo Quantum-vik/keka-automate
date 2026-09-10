@@ -47,7 +47,9 @@ OUT_M=$(printf '%s' "${OUT_TIME:-18:00}" | cut -d: -f2 | sed 's/^0*//'); OUT_M=$
 
 CRON_IN="$IN_M $IN_H * * 1-5 $PY $KEKA/keka_punch_in.py >> $LOG 2>&1"
 CRON_OUT="$OUT_M $OUT_H * * 1-5 $PY $KEKA/keka_punch_out.py >> $LOG 2>&1"
-CRON_CHK="0 10 * * * ${GUI_ENV}$PY $KEKA/keka_check.py >> $LOG 2>&1"
+# Every 6h, not once daily: a single daily slot is too easy to sleep through,
+# and the check is silent unless the cookie is actually near expiry.
+CRON_CHK="0 */6 * * * ${GUI_ENV}$PY $KEKA/keka_check.py >> $LOG 2>&1"
 
 ( crontab -l 2>/dev/null | grep -v "keka_punch\|keka_check"; \
   echo "$CRON_IN"; echo "$CRON_OUT"; echo "$CRON_CHK" ) | crontab -
@@ -55,6 +57,6 @@ CRON_CHK="0 10 * * * ${GUI_ENV}$PY $KEKA/keka_check.py >> $LOG 2>&1"
 echo "Installed Keka cron jobs:"
 echo "  Punch in   ${IN_H}:$(printf '%02d' "$IN_M") Mon-Fri"
 echo "  Punch out  ${OUT_H}:$(printf '%02d' "$OUT_M") Mon-Fri"
-echo "  Reauth     10:00 daily"
+echo "  Reauth     every 6 hours"
 echo "Verify with:  crontab -l"
 echo "Logs in:      $KEKA/logs/"

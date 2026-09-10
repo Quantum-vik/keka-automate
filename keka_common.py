@@ -83,6 +83,7 @@ def _app_data_dir():
 
 DATA_DIR     = _app_data_dir()
 SESSION_FILE = os.path.join(DATA_DIR, "session.json")
+SESSION_LOCK_FILE = os.path.join(DATA_DIR, "session.lock")
 ENV_FILE     = os.path.join(DATA_DIR, ".env")
 LOG_DIR      = os.path.join(DATA_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -608,6 +609,57 @@ def save_session(ctx):
     os.replace(tmp, SESSION_FILE)
 
 
+# ── Cross-process session lock ────────────────────────────────────────────────
+# The UI app, the punch scripts, and the reauth setup all run load→relogin→save
+# in SEPARATE processes; an in-process threading.Lock can't stop two of them
+# interleaving and letting the stale login's cookies win the last write. This
+# lock serializes those sequences. It is advisory and best-effort: callers get
+# None on timeout and PROCEED — a punch must never be skipped over a lock.
+
+def _acquire_session_lock(timeout=120, log=None):
+    """Take the cross-process session lock. Returns an open file handle to pass
+    to _release_session_lock, or None if the lock stayed busy past timeout."""
+    try:
+        f = open(SESSION_LOCK_FILE, "a+")
+    except OSError:
+        return None
+    deadline = time.time() + timeout
+    while True:
+        try:
+            if sys.platform.startswith("win"):
+                import msvcrt
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return f
+        except OSError:
+            if time.time() >= deadline:
+                if log:
+                    log.warning("session lock busy after %ss — proceeding without it",
+                                timeout)
+                f.close()
+                return None
+            time.sleep(1.5)
+
+
+def _release_session_lock(f):
+    if not f:
+        return
+    try:
+        if sys.platform.startswith("win"):
+            import msvcrt
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f, fcntl.LOCK_UN)
+    except OSError:
+        pass
+    f.close()
+
+
 # ── UI-driven headless login (email OTP entered in the app, no browser popup) ──
 def request_email_otp(page, log):
     """On the 2FA 'SendCode' page, ask Keka to email the OTP. No-op if we're
@@ -671,6 +723,9 @@ def interactive_login(otp_getter, log, headless=True):
     """
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
+        # Locked from BEFORE the state load: relogin decisions made on a stale
+        # snapshot must not overwrite cookies another process just refreshed.
+        _lk = _acquire_session_lock(timeout=60, log=log)
         state = SESSION_FILE if os.path.exists(SESSION_FILE) else None
         ctx = browser.new_context(storage_state=state)
         page = ctx.new_page()
@@ -713,7 +768,46 @@ def interactive_login(otp_getter, log, headless=True):
             log.info("Login complete — session saved")
             return True
         finally:
+            _release_session_lock(_lk)
             browser.close()
+
+
+# ── Desktop notifications (shared by the reauth watchdog and punch scripts) ──
+def _ps_str(s):
+    """Wrap s as a safe PowerShell single-quoted string literal ('' escapes ')."""
+    return "'" + str(s).replace("'", "''") + "'"
+
+
+def notify(message, title="Keka Attendance"):
+    """Best-effort desktop notification (non-blocking). Silent if unsupported."""
+    plat = sys.platform
+    try:
+        if plat == "darwin":
+            subprocess.run(
+                ["osascript", "-e",
+                 f'display notification "{message}" with title "{title}" sound name "Glass"'],
+                check=False,
+            )
+        elif plat.startswith("linux"):
+            if shutil.which("notify-send"):
+                subprocess.run(["notify-send", title, message], check=False)
+        elif plat.startswith("win"):
+            # PowerShell tray balloon — load both assemblies, pump the message
+            # queue (DoEvents) so the balloon actually renders, then dispose.
+            ps = (
+                'Add-Type -AssemblyName System.Windows.Forms;'
+                'Add-Type -AssemblyName System.Drawing;'
+                '$n=New-Object System.Windows.Forms.NotifyIcon;'
+                '$n.Icon=[System.Drawing.SystemIcons]::Information;'
+                '$n.BalloonTipTitle=' + _ps_str(title) + ';'
+                '$n.BalloonTipText=' + _ps_str(message) + ';'
+                '$n.Visible=$true;$n.ShowBalloonTip(5000);'
+                '[System.Windows.Forms.Application]::DoEvents();'
+                'Start-Sleep -Milliseconds 6000;$n.Dispose();'
+            )
+            subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=False)
+    except Exception:
+        pass
 
 
 # ── Session history log (for the UI activity feed / "previous session info") ──
@@ -826,8 +920,30 @@ def session_health():
     return out
 
 
+def classify_session_page(url, has_out_btn, has_in_btn):
+    """Sort a probed attendance page into a session verdict:
+      'in'/'out' — inside the app with the punch button visible
+      'dead'     — bounced to the identity/login flow: the session truly expired
+      None       — anything ambiguous (SPA still settling, maintenance page,
+                   network error page). Callers must treat None as "keep the
+                   previous verdict", NOT as session-dead — flashing "Session
+                   expired" over a slow page load was a long-standing false alarm.
+    """
+    u = url or ""
+    if TENANT_HOST and TENANT_HOST in u and "app.keka.com" not in u and "Account" not in u:
+        if has_out_btn:
+            return "in"
+        if has_in_btn:
+            return "out"
+        return None
+    if "app.keka.com" in u or "Account" in u or "login" in u.lower():
+        return "dead"
+    return None
+
+
 def get_status():
-    """Headless: is the user clocked 'in', 'out', or None (unknown/logged out)?"""
+    """Headless probe: 'in'/'out' (logged in), 'dead' (login page — session
+    expired), or None (unknown/transient — see classify_session_page)."""
     if not os.path.exists(SESSION_FILE):
         return None
     with sync_playwright() as p:
@@ -837,13 +953,10 @@ def get_status():
         try:
             page.goto(ATTENDANCE_URL, wait_until="domcontentloaded", timeout=30_000)
             page.wait_for_timeout(5000)
-            if not is_logged_in(page):
-                return None
-            if page.locator('text="Web Clock-out"').count() > 0:
-                return "in"
-            if page.locator('text="Web Clock-In"').count() > 0:
-                return "out"
-            return None
+            return classify_session_page(
+                page.url,
+                page.locator('text="Web Clock-out"').count() > 0,
+                page.locator('text="Web Clock-In"').count() > 0)
         finally:
             b.close()
 
@@ -946,6 +1059,17 @@ def attempt_relogin(ctx, page, log):
     return True
 
 
+def punch_failed(action, log, msg):
+    """Make a failed punch VISIBLE — feed entry + desktop notification. A
+    log-file line alone means nobody notices until payroll does (this app once
+    lost two days of punches that way). kind='info' on purpose: 'in'/'out'
+    history kinds are read back as real punch timestamps by the UI."""
+    label = "in" if action == "in" else "out"
+    log.error(msg)
+    log_history("info", f"Auto clock-{label} FAILED — {msg}")
+    notify(f"Auto clock-{label} failed: {msg}")
+
+
 # ── Main entry for the cron scripts ───────────────────────────────────────────
 def run_punch(action, log_file):
     """
@@ -957,13 +1081,16 @@ def run_punch(action, log_file):
     log.info("=== Keka Punch-%s started ===", label)
 
     if not EMAIL or not PASSWORD:
-        log.error("Missing KEKA_EMAIL / KEKA_PASSWORD — set them in %s", ENV_FILE)
+        punch_failed(action, log,
+                     f"KEKA_EMAIL / KEKA_PASSWORD missing — set them in {ENV_FILE}")
         sys.exit(1)
 
     if not os.path.exists(SESSION_FILE):
-        log.error("No session file at %s — run:  python keka_setup.py", SESSION_FILE)
+        punch_failed(action, log,
+                     "no saved session — open Auto-Keka and sign in")
         sys.exit(1)
 
+    _lk = _acquire_session_lock(timeout=120, log=log)
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -981,7 +1108,9 @@ def run_punch(action, log_file):
                 if not attempt_relogin(ctx, page, log):
                     shot = tmp_path(f"keka_punch{action}_expired_{datetime.now():%Y%m%d_%H%M%S}.png")
                     page.screenshot(path=shot)
-                    log.error("Could not recover session. Re-run: python keka_setup.py")
+                    punch_failed(action, log,
+                                 "session expired and an OTP is needed — open "
+                                 "Auto-Keka and press Refresh to sign in again")
                     log.error("Screenshot: %s", shot)
                     browser.close()
                     sys.exit(1)
@@ -1023,7 +1152,9 @@ def run_punch(action, log_file):
                 if not click_punch(page, log, action):
                     shot = tmp_path(f"keka_punch{action}_debug_{datetime.now():%Y%m%d_%H%M%S}.png")
                     page.screenshot(path=shot)
-                    log.error("Punch-%s button NOT found. Screenshot: %s", action, shot)
+                    punch_failed(action, log,
+                                 f"punch button not found on the attendance page "
+                                 f"(screenshot: {shot})")
                     browser.close()
                     sys.exit(1)
 
@@ -1043,6 +1174,9 @@ def run_punch(action, log_file):
             browser.close()
     except Exception:
         log.exception("Unhandled error during Punch-%s", label)
+        punch_failed(action, log, "unexpected error — see the punch log")
         raise
+    finally:
+        _release_session_lock(_lk)
 
     cleanup_pngs(log)

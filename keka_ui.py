@@ -684,6 +684,83 @@ def start_remote_server(backend):
         return None
 
 
+SIDECAR_FILE = os.path.join(kc.DATA_DIR, "sidecar.json")
+
+
+def _exit_when_orphaned(httpd, poll=2.0):
+    """Shut down once our parent goes away (getppid() drops to launchd/init).
+
+    A front-end that crashes, is force-quit, or is SIGKILLed never gets to run
+    its cleanup, so the core cannot rely on being told to stop — it would sit
+    there holding a port and a token forever. Watching the parent covers every
+    one of those cases.
+    """
+    original = os.getppid()
+
+    def watch():
+        while True:
+            time.sleep(poll)
+            current = os.getppid()
+            if current != original or current == 1:
+                httpd.shutdown()          # unblocks serve_forever -> finally
+                return
+
+    threading.Thread(target=watch, daemon=True).start()
+
+
+def run_serve(port=0, exit_with_parent=False):
+    """Headless API mode for a native front-end (the Swift macOS client).
+
+    Same HTTP + SSE surface the phone remote already speaks, but bound to
+    loopback only and with no browser popped open. The chosen port and token
+    are written to SIDECAR_FILE so the front-end can find us without having to
+    scrape stdout — the port is normally 0 (kernel-assigned) to avoid clashing
+    with the phone remote on 8377.
+    """
+    backend = Backend()
+    token = _remote_token()
+    httpd, broadcast, actual = _serve_http(backend, "127.0.0.1", port, token)
+    backend.emit = broadcast
+
+    info = {"port": actual, "token": token, "pid": os.getpid()}
+    try:
+        with open(SIDECAR_FILE, "w", encoding="utf-8") as f:
+            json.dump(info, f)
+        os.chmod(SIDECAR_FILE, 0o600)      # carries the API token — owner only
+    except OSError as e:
+        print(f"warning: could not write {SIDECAR_FILE}: {e}", file=sys.stderr, flush=True)
+
+    # Also emit on stdout so a parent process can read it without polling a file.
+    print(json.dumps(info), flush=True)
+
+    # A bare SIGTERM (the front-end quitting, `pkill`, logout) kills the process
+    # without unwinding, so the finally below never runs and a stale handshake
+    # outlives the core. Turn it into a normal shutdown instead.
+    import signal
+
+    def _shutdown(_signum, _frame):
+        raise KeyboardInterrupt
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, _shutdown)
+        except (ValueError, OSError):
+            pass                          # not on the main thread — best effort
+
+    if exit_with_parent:
+        _exit_when_orphaned(httpd)
+
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        try:
+            os.remove(SIDECAR_FILE)        # never leave a stale port/token behind
+        except OSError:
+            pass
+
+
 def run_browser():
     import webbrowser
     backend = Backend()
@@ -706,6 +783,18 @@ def main():
     if args[:1] == ["--check"]:
         import keka_check
         keka_check.main()
+        return
+    if args[:1] == ["--serve"]:
+        # Auto-Keka --serve [port] [--exit-with-parent]
+        #   headless API for a native front-end (the Swift macOS client).
+        rest = args[1:]
+        exit_with_parent = "--exit-with-parent" in rest
+        positional = [a for a in rest if not a.startswith("--")]
+        try:
+            port = int(positional[0]) if positional else 0
+        except ValueError:
+            print(f"invalid port: {positional[0]}", file=sys.stderr); sys.exit(2)
+        run_serve(port, exit_with_parent=exit_with_parent)
         return
 
     if not os.path.exists(UI_HTML):

@@ -52,11 +52,31 @@ class Backend:
         self.log.setLevel(logging.INFO)
         self.log.handlers = [logging.NullHandler()]
         self._status = self._status_from_history()
+        self._update = {"available": False, "current": kc.APP_VERSION,
+                        "latest": None, "url": kc.RELEASES_PAGE, "notes": ""}
         threading.Thread(target=self._status_refresher, daemon=True).start()
+        threading.Thread(target=self._update_checker, daemon=True).start()
         # Existing installs (onboarded before app-wrapping existed) self-heal:
         # quietly install the native wrapper + repoint autostart at it.
         if kc.is_onboarded() and not kc.desktop_app_installed():
             threading.Thread(target=self._ensure_desktop_app, daemon=True).start()
+
+    def _update_checker(self):
+        """Poll GitHub for a newer release on launch, then every 12h. Silent on
+        error; pushes fresh state (with the banner) only when something changes."""
+        time.sleep(4)   # let the first state load land before we hit the network
+        while True:
+            try:
+                info = kc.check_for_update()
+                if info != self._update:
+                    self._update = info
+                    if info.get("available"):
+                        self.push_log(f"Update available: v{info['latest']} "
+                                      f"(you have v{info['current']})", "info")
+                    self.push_state()
+            except Exception:
+                pass
+            time.sleep(12 * 3600)
 
     def _ensure_desktop_app(self):
         if kc.install_desktop_app():
@@ -137,6 +157,8 @@ class Backend:
             "timeoff": kc.load_timeoff(),
             "todayOff": kc.is_timeoff(datetime.now().strftime("%Y-%m-%d")),
             "stats": kc.attendance_stats(hist, env.get("KEKA_IN_TIME", "09:00")),
+            "version": kc.APP_VERSION,
+            "update": self._update,
             "config": {"url": env.get("KEKA_BASE_URL", ""), "email": env.get("KEKA_EMAIL", ""),
                        "configured": configured},
         }
@@ -326,6 +348,28 @@ class Backend:
         kc.log_history("info", "Automation paused" if paused else "Automation resumed")
         self.push_state()
         return {"ok": True, "paused": kc.is_paused()}
+
+    # ── software update ──────────────────────────────────────────────────────
+    def check_update(self):
+        """Force an update check now (the banner's 'Check again'). Returns the
+        {available, current, latest, url, notes} dict and refreshes state."""
+        self._update = kc.check_for_update()
+        self.push_state()
+        return {"ok": True, "update": self._update}
+
+    def open_release(self, obj=None):
+        """Open the release download page in the user's browser. Only ever opens
+        our own GitHub releases URL — never an arbitrary URL from the caller."""
+        url = (obj or {}).get("url") or self._update.get("url") or kc.RELEASES_PAGE
+        allowed = f"https://github.com/{kc.GITHUB_REPO}/releases"
+        if not str(url).startswith(allowed):
+            url = kc.RELEASES_PAGE
+        import webbrowser
+        try:
+            webbrowser.open(url)
+            return {"ok": True, "url": url}
+        except Exception as e:
+            return {"ok": False, "message": str(e)}
 
     # ── attendance export ────────────────────────────────────────────────────
     def export_csv(self):
@@ -529,6 +573,8 @@ class Api:
     def remove_timeoff(self, obj): return self._b.remove_timeoff(obj)
     def set_pause(self, obj):   return self._b.set_pause(obj)
     def export_csv(self):       return self._b.export_csv()
+    def check_update(self):     return self._b.check_update()
+    def open_release(self, obj=None): return self._b.open_release(obj)
 
     # frameless-window controls (the design draws its own traffic lights)
     def win_close(self):
@@ -586,7 +632,8 @@ _SHIM = """
     activate_license:(k)=>post('/api/activate_license',{key:k}), remote_info:()=>post('/api/remote_info'),
     get_timeoff:()=>post('/api/get_timeoff'), add_timeoff:(o)=>post('/api/add_timeoff',o),
     remove_timeoff:(o)=>post('/api/remove_timeoff',o), set_pause:(o)=>post('/api/set_pause',o),
-    export_csv:()=>post('/api/export_csv')}};
+    export_csv:()=>post('/api/export_csv'), check_update:()=>post('/api/check_update'),
+    open_release:(o)=>post('/api/open_release',o)}};
   try{const es=new EventSource('/events');es.onmessage=(e)=>{const m=JSON.parse(e.data),K=window.KekaUI||{};
     if(m.type==='log'&&K.onLog)K.onLog(m.entry);else if(m.type==='state'&&K.onState)K.onState(m.state);
     else if(m.type==='otp'&&K.onOtpRequired)K.onOtpRequired(m.retry);else if(m.type==='otpDone'&&K.onOtpDone)K.onOtpDone();};}catch(_){}
@@ -688,7 +735,9 @@ def _serve_http(backend, host, port, token):
                       "/api/add_timeoff": lambda: backend.add_timeoff(body),
                       "/api/remove_timeoff": lambda: backend.remove_timeoff(body),
                       "/api/set_pause": lambda: backend.set_pause(body),
-                      "/api/export_csv": lambda: backend.export_csv()}
+                      "/api/export_csv": lambda: backend.export_csv(),
+                      "/api/check_update": lambda: backend.check_update(),
+                      "/api/open_release": lambda: backend.open_release(body)}
             fn = routes.get(route)
             if not fn: self.send_error(404); return
             try: self._json(fn())

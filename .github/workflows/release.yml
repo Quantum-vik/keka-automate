@@ -45,6 +45,12 @@ jobs:
             macos_icon: ""
             windows_icon: ""
     runs-on: ${{ matrix.os }}
+    # Signing is OPTIONAL and OS-gated (the munder-difflin pattern): these map
+    # secret PRESENCE to a boolean the signing steps guard on, so a repo with no
+    # certificates set just builds unsigned and stays green — forks included.
+    env:
+      HAS_APPLE_SIGNING: ${{ secrets.APPLE_SIGNING_IDENTITY != '' }}
+      HAS_WINDOWS_SIGNING: ${{ secrets.WINDOWS_CERTIFICATE_PFX != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -103,6 +109,17 @@ jobs:
           mv keka_ui.app Auto-Keka.app
           ditto -c -k --keepParent Auto-Keka.app "../${{ matrix.name }}.zip"
 
+      - name: Sign & notarize — macOS (optional)
+        if: runner.os == 'macOS' && env.HAS_APPLE_SIGNING == 'true'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bash packaging/sign_macos.sh build/Auto-Keka.app "${{ matrix.name }}.zip"
+
       - name: Package — Linux (onefile binary)
         if: runner.os == 'Linux'
         run: |
@@ -116,7 +133,13 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item build\keka_ui.exe Auto-Keka.exe
+          if ($env:HAS_WINDOWS_SIGNING -eq 'true') {
+            powershell -ExecutionPolicy Bypass -File packaging\sign_windows.ps1 -Exe Auto-Keka.exe
+          }
           Compress-Archive -Path Auto-Keka.exe -DestinationPath "${{ matrix.name }}.zip"
+        env:
+          WINDOWS_CERTIFICATE_PFX: ${{ secrets.WINDOWS_CERTIFICATE_PFX }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -198,8 +221,23 @@ jobs:
           shopt -s nullglob
           files=(artifacts/*/*.zip)
           [ ${#files[@]} -gt 0 ] || { echo "no binaries built — refusing to release"; exit 1; }
-          gh release create "${GITHUB_REF_NAME}" "${files[@]}" \
+
+          # SHA256SUMS so downloaders can verify integrity (munder-difflin ships
+          # per-OS sums; one combined file is enough here). sha256sum on Linux.
+          sums="SHA256SUMS.txt"
+          : > "$sums"
+          for f in "${files[@]}"; do
+            ( cd "$(dirname "$f")" && sha256sum "$(basename "$f")" ) >> "$sums"
+          done
+          echo "checksums:"; cat "$sums"
+
+          # A hyphen in the tag (v1.2.0-rc.1, -beta) marks a PRE-release, so
+          # in-app "latest" checks won't auto-offer an untested build.
+          prerelease=""
+          case "${GITHUB_REF_NAME}" in *-*) prerelease="--prerelease" ;; esac
+
+          gh release create "${GITHUB_REF_NAME}" "${files[@]}" "$sums" $prerelease \
             --repo "${GITHUB_REPOSITORY}" \
             --title "Auto-Keka ${GITHUB_REF_NAME}" \
             --notes-file .github/release-notes.md || \
-          gh release upload "${GITHUB_REF_NAME}" "${files[@]}" --repo "${GITHUB_REPOSITORY}"
+          gh release upload "${GITHUB_REF_NAME}" "${files[@]}" "$sums" --repo "${GITHUB_REPOSITORY}"

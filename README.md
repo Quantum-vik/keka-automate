@@ -143,6 +143,13 @@ whole app; from source it's `keka_ui.py`) showing:
   right on the card
 - 🗓️ **This week** clock-in/out strip (with per-day worked hours) and a live,
   scrollable **activity** feed
+- 📊 **Attendance summary** — hours worked this week/month, days present, and
+  late-arrival count, all derived from your own history
+- 🌴 **Time off** — add holidays / leave / WFH dates in Settings and auto-punch
+  **skips those days** (a leave checker, so you never clock in on a day off)
+- ⏸️ **Pause / resume** automation from the title-bar pill — a one-click
+  kill-switch when you don't want it punching for you
+- 📤 **Export attendance to CSV** (one row per day) for your own records
 - ☀️🌙 **Clock in / out** buttons (with busy states) and 🔑 **Refresh session**
 - 📱 A **Phone remote** QR code in Settings — scan it to drive the whole
   dashboard from your phone over the LAN (token-protected)

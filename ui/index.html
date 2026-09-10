@@ -222,6 +222,46 @@
   .save.ghost { background:rgba(6,60,50,.06); color:var(--teal-600); border:.5px solid rgba(6,60,50,.14); }
   .save.ghost:hover { background:rgba(6,60,50,.12); }
 
+  /* ── off-day banner (leave / holiday / paused) ─────────────────────────── */
+  .banner { display:flex; align-items:center; gap:11px; padding:13px 16px; border-radius:var(--r-md);
+    background:linear-gradient(135deg,rgba(232,147,60,.16),rgba(232,147,60,.07));
+    border:.5px solid rgba(232,147,60,.32); box-shadow:var(--hairline); }
+  .banner.paused { background:linear-gradient(135deg,rgba(120,120,130,.16),rgba(120,120,130,.07));
+    border-color:rgba(120,120,130,.34); }
+  .banner-ico { font-size:20px; line-height:1; }
+  .banner-txt { font-size:13.5px; font-weight:600; color:var(--ink); }
+
+  /* ── attendance stats (4-up numbers) ───────────────────────────────────── */
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:var(--sp-3); }
+  .stat { text-align:center; padding:var(--sp-3) var(--sp-2); border-radius:var(--r-md);
+    background:rgba(255,255,255,.42); border:.5px solid rgba(255,255,255,.6); box-shadow:var(--hairline); }
+  .stat-v { font-family:var(--mono); font-size:22px; font-weight:650; letter-spacing:-.02em; color:var(--ink); }
+  .stat-k { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-3); margin-top:4px; }
+  .stat.warn .stat-v { color:var(--out); }
+
+  /* ── time-off list + select ────────────────────────────────────────────── */
+  .tf-select { width:100%; min-width:0; height:40px; border-radius:var(--r-sm); border:.5px solid var(--glass-border);
+    background:rgba(255,255,255,.75); font-size:14px; color:var(--ink); padding:0 10px; font-family:inherit;
+    -webkit-appearance:none; appearance:none; cursor:pointer; }
+  .tf-list { display:flex; flex-direction:column; gap:7px; margin-top:12px; }
+  .tf-row { display:flex; align-items:center; gap:10px; padding:9px 12px; border-radius:var(--r-sm);
+    background:rgba(255,255,255,.5); border:.5px solid rgba(6,60,50,.1); }
+  .tf-row .tf-d { font-family:var(--mono); font-size:12.5px; font-weight:600; color:var(--ink); }
+  .tf-row .tf-kind { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;
+    padding:2px 8px; border-radius:var(--r-full); background:rgba(15,169,142,.14); color:var(--teal-600); }
+  .tf-row .tf-kind.holiday { background:rgba(232,147,60,.16); color:#b96a1f; }
+  .tf-row .tf-kind.wfh { background:rgba(122,140,220,.16); color:#5763c4; }
+  .tf-row .tf-note { flex:1; font-size:12.5px; color:var(--ink-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tf-row .tf-x { width:22px; height:22px; border:none; border-radius:var(--r-sm); cursor:pointer;
+    background:rgba(6,60,50,.08); color:var(--ink-2); font-size:13px; line-height:1; }
+  .tf-row .tf-x:hover { background:rgba(200,70,50,.16); color:#b0402e; }
+  .tf-empty { font-size:12.5px; color:var(--ink-3); padding:4px 2px; }
+  /* autopill becomes a control; paused state recolors it */
+  .autopill { cursor:pointer; }
+  .autopill.paused { background:rgba(120,120,130,.16); border-color:rgba(120,120,130,.34); }
+  .autopill.paused i { background:#9aa; animation:none; }
+  .autopill.paused span { color:var(--ink-2); }
+
   /* ── first-run overlays: dependency setup + onboarding wizard ──────────── */
   #setup, #wizard, #gate { position:absolute; inset:0; z-index:46; display:none; align-items:center; justify-content:center;
     padding:34px 24px; overflow-y:auto; background:rgba(6,40,35,.6);
@@ -312,6 +352,13 @@
     .save.ghost { background:rgba(255,255,255,.08); color:#35d69a; border-color:rgba(255,255,255,.14); }
     .save.ghost:hover { background:rgba(255,255,255,.14); }
     .setuplog { background:rgba(255,255,255,.06); }
+    .stat { background:rgba(255,255,255,.06); border-color:rgba(255,255,255,.1); }
+    .tf-select { background:rgba(255,255,255,.10); border-color:rgba(255,255,255,.16); color:var(--ink); }
+    .tf-row { background:rgba(255,255,255,.06); border-color:rgba(255,255,255,.1); }
+    .tf-row .tf-x { background:rgba(255,255,255,.1); color:var(--ink-2); }
+    .tf-row .tf-x:hover { background:rgba(220,90,70,.28); color:#ffb4a2; }
+    .banner { background:linear-gradient(135deg,rgba(232,147,60,.2),rgba(232,147,60,.08)); border-color:rgba(232,147,60,.36); }
+    .banner.paused { background:linear-gradient(135deg,rgba(150,150,160,.16),rgba(150,150,160,.07)); border-color:rgba(160,160,170,.3); }
     .wsteps i { background:rgba(255,255,255,.15); }
     .wnote { color:#8fd8c6; }
     #toast { background:rgba(230,242,238,.95); color:#0f2c26; box-shadow:0 10px 30px rgba(0,0,0,.5); }
@@ -340,6 +387,7 @@
     .btn span { font-size:12.5px; }
     .card { padding:var(--sp-4); border-radius:var(--r-md); }
     .week { grid-template-columns:repeat(5, minmax(84px, 1fr)); gap:var(--sp-2); overflow-x:auto; padding-bottom:4px; }
+    .stats { grid-template-columns:1fr 1fr; }   /* 2×2 so the mono numbers don't wrap */
     .big { font-size:19px; }
     #titlebar { padding-left:12px; padding-right:12px; gap:8px; }
     .autopill span { display:none; }    /* dot only — save titlebar space */
@@ -369,7 +417,8 @@
         </div>
         <span>Auto&#8288;-&#8288;Keka</span>
       </div>
-      <div class="autopill"><i></i><span>Automation on</span></div>
+      <div class="autopill" id="autoPill" role="button" tabindex="0"
+           title="Pause or resume automation"><i></i><span>Automation on</span></div>
       <div class="iconbtn" id="gear" title="Settings">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
           <line x1="2" y1="5" x2="14" y2="5" stroke="#0f3a34" stroke-width="1.5" stroke-linecap="round"/>
@@ -381,6 +430,12 @@
     </div>
 
     <div id="content">
+      <!-- OFF-DAY BANNER (leave / holiday / paused — auto-punch is skipped) -->
+      <div id="offBanner" class="banner" style="display:none">
+        <span class="banner-ico" id="offIco">🌴</span>
+        <span class="banner-txt" id="offText">—</span>
+      </div>
+
       <!-- HERO -->
       <div class="hero">
         <div class="hero-top">
@@ -428,6 +483,17 @@
       <div class="card">
         <div class="kicker" style="margin-bottom:16px">This week</div>
         <div class="week" id="week"></div>
+      </div>
+
+      <!-- ATTENDANCE STATS -->
+      <div class="card">
+        <div class="kicker" style="margin-bottom:16px">Attendance summary</div>
+        <div class="stats" id="stats">
+          <div class="stat"><div class="stat-v" id="stWeekHrs">—</div><div class="stat-k">This week</div></div>
+          <div class="stat"><div class="stat-v" id="stWeekDays">—</div><div class="stat-k">Days present</div></div>
+          <div class="stat"><div class="stat-v" id="stWeekLate">—</div><div class="stat-k">Late arrivals</div></div>
+          <div class="stat"><div class="stat-v" id="stMonthHrs">—</div><div class="stat-k">This month</div></div>
+        </div>
       </div>
 
       <!-- ACTIVITY -->
@@ -492,6 +558,40 @@
           <div style="display:flex; align-items:center; justify-content:flex-end; gap:12px;">
             <span class="saved-tag" id="savedSched">Applied ✓</span>
             <button class="save" id="saveSched">Save &amp; apply schedule</button>
+          </div>
+        </div>
+
+        <!-- Time off — auto-punch skips these dates -->
+        <div class="sect">
+          <span class="kicker">Time off</span>
+          <div class="meta" style="margin:0 0 10px">Auto-punch is skipped on these dates — holidays, leave, or days you handle yourself.</div>
+          <div class="field times" style="align-items:flex-end">
+            <div style="flex:1.2"><label>Date</label><input id="toDate" type="date" /></div>
+            <div style="flex:1"><label>Type</label>
+              <select id="toKind" class="tf-select">
+                <option value="leave">Leave</option>
+                <option value="holiday">Holiday</option>
+                <option value="wfh">WFH / off</option>
+              </select>
+            </div>
+            <button class="save" id="toAdd" style="margin:0">Add</button>
+          </div>
+          <div class="tf-list" id="toList"></div>
+        </div>
+
+        <!-- Automation control + export -->
+        <div class="sect">
+          <span class="kicker">Automation</span>
+          <div class="acct-card" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+            <div>
+              <div class="acct-k" style="font-size:13.5px;color:var(--ink)">Auto clock-in / clock-out</div>
+              <div class="meta" id="pauseSub" style="margin:2px 0 0">Running on your schedule.</div>
+            </div>
+            <button class="save ghost" id="pauseBtn">Pause</button>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:6px">
+            <span class="meta" id="exportTag" style="margin:0"></span>
+            <button class="save ghost" id="exportBtn">Export attendance (CSV)</button>
           </div>
         </div>
       </div>
@@ -617,6 +717,9 @@ const MOCK = {
     { time: "08:59", msg: "Session valid — device pass OK",  kind: "info"},
     { time: "Mon",   msg: "Device pass renewed for 14 days", kind: "info"},
   ],
+  paused: false,
+  timeoff: [],   // filled by buildMockTimeoff() below
+  stats: { week: { days: 4, minutes: 2043, late: 1 }, month: { days: 16, minutes: 8112, late: 3 } },
 };
 
 /* remote (browser/phone) mode: drop the fake macOS window chrome */
@@ -632,6 +735,10 @@ const api = {
   async clockOut()      { return hasBridge() ? window.pywebview.api.clock_out()    : mockPunch("out"); },
   async refresh()       { return hasBridge() ? window.pywebview.api.refresh_session() : mockRefresh(); },
   async submitOtp(code) { return hasBridge() ? window.pywebview.api.submit_otp(code)  : { ok:true }; },
+  async setPause(p)     { return hasBridge() ? window.pywebview.api.set_pause({paused:p}) : mockPause(p); },
+  async addTimeoff(o)   { return hasBridge() ? window.pywebview.api.add_timeoff(o)   : mockAddTimeoff(o); },
+  async removeTimeoff(d){ return hasBridge() ? window.pywebview.api.remove_timeoff({date:d}) : mockRemoveTimeoff(d); },
+  async exportCsv()     { return hasBridge() ? window.pywebview.api.export_csv()     : { ok:true, path:"(preview) ~/Desktop/auto-keka-attendance.csv" }; },
 };
 
 /* ── Python → JS callbacks (Python calls these via window.evaluate_js) ─────── */
@@ -663,6 +770,10 @@ function normalize(s) {
   if (s.depsReady === undefined) s.depsReady = true;
   if (s.onboarded === undefined) s.onboarded = true;
   if (s.licensed === undefined) s.licensed = true;
+  if (!s.timeoff) s.timeoff = hasBridge() ? [] : (MOCK.timeoff || []);
+  if (!s.stats)   s.stats   = hasBridge() ? {week:{days:0,minutes:0,late:0},month:{days:0,minutes:0,late:0}}
+                                          : (MOCK.stats || {week:{days:0,minutes:0,late:0},month:{days:0,minutes:0,late:0}});
+  if (s.paused === undefined) s.paused = false;
   return s;
 }
 
@@ -739,6 +850,9 @@ function render() {
 
   renderWeek(STATE.week);
   renderFeed(STATE.activity);
+  renderStats(STATE.stats);
+  renderOffBanner();
+  renderPausePill();
   applyGates();
 }
 
@@ -782,6 +896,72 @@ function pushActivity(entry) {
   STATE.activity = [entry, ...(STATE.activity||[])].slice(0,12);
   renderFeed(STATE.activity);
 }
+
+/* ── attendance stats card ─────────────────────────────────────────────────*/
+function fmtHours(mins){ mins = Math.max(0, mins|0); const h=Math.floor(mins/60), m=mins%60;
+  return h > 0 ? `${h}h ${pad(m)}m` : `${m}m`; }
+function renderStats(st){
+  st = st || {week:{},month:{}};
+  const w = st.week || {}, m = st.month || {};
+  $("#stWeekHrs").textContent  = fmtHours(w.minutes||0);
+  $("#stWeekDays").textContent = String(w.days||0);
+  $("#stWeekLate").textContent = String(w.late||0);
+  $("#stMonthHrs").textContent = fmtHours(m.minutes||0);
+  $("#stWeekLate").parentElement.classList.toggle("warn", (w.late||0) > 0);
+}
+
+/* ── off-day banner (leave / holiday / paused — auto-punch skipped) ─────────*/
+function renderOffBanner(){
+  const b = $("#offBanner");
+  if (STATE.paused){
+    b.style.display = "flex"; b.classList.add("paused");
+    $("#offIco").textContent = "⏸";
+    $("#offText").textContent = "Automation is paused — no auto clock-in or clock-out.";
+    return;
+  }
+  b.classList.remove("paused");
+  const off = STATE.todayOff;
+  if (off){
+    const label = { holiday:"Holiday", wfh:"Working off-site", leave:"On leave" }[off.kind] || "Time off";
+    b.style.display = "flex";
+    $("#offIco").textContent = off.kind === "holiday" ? "🎉" : off.kind === "wfh" ? "🏠" : "🌴";
+    $("#offText").textContent = `${label} today — auto-punch is skipped${off.note ? " · " + off.note : ""}.`;
+  } else {
+    b.style.display = "none";
+  }
+}
+
+/* ── automation pill (titlebar) reflects + toggles the pause state ──────────*/
+function renderPausePill(){
+  const pill = $("#autoPill"); if (!pill) return;
+  pill.classList.toggle("paused", !!STATE.paused);
+  pill.querySelector("span").textContent = STATE.paused ? "Automation paused" : "Automation on";
+  pill.title = STATE.paused ? "Resume automation" : "Pause automation";
+}
+
+/* ── time-off list (settings) ──────────────────────────────────────────────*/
+function renderTimeoff(){
+  const list = $("#toList"), items = (STATE && STATE.timeoff) || [];
+  if (!items.length){ list.innerHTML = `<div class="tf-empty">No time off scheduled.</div>`; return; }
+  const today = new Date(); today.setHours(0,0,0,0);
+  const fmt = d => { const [y,mo,da]=d.split("-").map(Number);
+    return new Date(y,mo-1,da).toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}); };
+  list.innerHTML = items.map(e => {
+    const past = new Date(e.date+"T00:00:00") < today;
+    return `<div class="tf-row" style="${past?'opacity:.5':''}">
+      <span class="tf-d">${esc(fmt(e.date))}</span>
+      <span class="tf-kind ${esc(e.kind)}">${esc(e.kind)}</span>
+      <span class="tf-note">${esc(e.note||"")}</span>
+      <button class="tf-x" data-date="${esc(e.date)}" title="Remove">✕</button>
+    </div>`;
+  }).join("");
+}
+
+/* browser-preview mocks (no bridge): mutate STATE locally so the UI responds */
+function mockPause(p){ if (STATE) STATE.paused = p; return { ok:true, paused:p }; }
+function mockAddTimeoff(o){ if (STATE){ STATE.timeoff = [...(STATE.timeoff||[]).filter(e=>e.date!==o.date),
+  {date:o.date,kind:o.kind||"leave",note:o.note||""}].sort((a,b)=>a.date<b.date?-1:1); } return { ok:true, entries:STATE.timeoff }; }
+function mockRemoveTimeoff(d){ if (STATE) STATE.timeoff = (STATE.timeoff||[]).filter(e=>e.date!==d); return { ok:true, entries:STATE.timeoff }; }
 
 /* floating toast — the visible result of an action (the feed is the archive) */
 let _toastTimer = null;
@@ -905,7 +1085,14 @@ function buildMockWeek(){
     if(i<todayIdx){ [inT,outT]=sample[i]; } else if(today){ inT="9:02"; outT="—"; } else { inT="—"; outT="—"; dim=true; }
     return { day, date:`${d.getMonth()+1}/${d.getDate()}`, in:inT, out:outT, today, dim }; });
 }
-function mockState(){ const s=JSON.parse(JSON.stringify(MOCK)); s.clockInAt=todayAt(9,2).getTime(); s.week=buildMockWeek(); return s; }
+function buildMockTimeoff(){
+  const d=(off)=>{ const x=new Date(); x.setDate(x.getDate()+off); return x.toISOString().slice(0,10); };
+  return [ {date:d(3), kind:"leave", note:"Dentist"},
+           {date:d(12), kind:"holiday", note:"Independence Day"},
+           {date:d(-2), kind:"wfh", note:""} ];
+}
+function mockState(){ const s=JSON.parse(JSON.stringify(MOCK)); s.clockInAt=todayAt(9,2).getTime();
+  s.week=buildMockWeek(); s.timeoff=buildMockTimeoff(); return s; }
 function mockPunch(){ return { ok:true }; }
 function mockRefresh(){ return { ok:true, message:"Session refreshed — device pass valid 14 days" }; }
 
@@ -1052,7 +1239,17 @@ function openSettings(){
   $("#cfgIn").value    = toHHMM(STATE && STATE.scheduleIn,  "09:00");
   $("#cfgOut").value   = toHHMM(STATE && STATE.scheduleOut, "18:00");
   loadRemoteInfo();
+  renderTimeoff();
+  renderPauseCtl();
+  if (!$("#toDate").value) $("#toDate").value = new Date(vnow()).toISOString().slice(0,10);
   $("#settings").classList.add("show");
+}
+/* pause row inside settings (mirrors the titlebar pill) */
+function renderPauseCtl(){
+  const paused = !!(STATE && STATE.paused);
+  $("#pauseBtn").textContent = paused ? "Resume" : "Pause";
+  $("#pauseSub").textContent = paused ? "Paused — no auto clock-in or clock-out."
+                                      : "Running on your schedule.";
 }
 function closeSettings(){ $("#settings").classList.remove("show"); }
 function flashTag(id){ const t=$(id); t.classList.add("on"); setTimeout(()=>t.classList.remove("on"), 1800); }
@@ -1100,6 +1297,47 @@ $("#saveSched").addEventListener("click", async () => {
   flashTag("#savedSched");
   toast(`Schedule applied — in ${inT}, out ${outT}, Mon–Fri`);
   pushActivity({ time: hm(), msg: `Schedule set · in ${inT}, out ${outT}`, kind: "info" });
+});
+
+/* ── pause / resume automation ─────────────────────────────────────────────*/
+async function togglePause(){
+  const next = !(STATE && STATE.paused);
+  const r = await api.setPause(next);
+  if (STATE) STATE.paused = (r && typeof r.paused === "boolean") ? r.paused : next;
+  render(); renderPauseCtl();
+  toast(STATE.paused ? "Automation paused" : "Automation resumed");
+  if (!hasBridge()) pushActivity({ time: hm(), msg: STATE.paused?"Automation paused":"Automation resumed", kind:"info" });
+}
+$("#autoPill").addEventListener("click", togglePause);
+$("#autoPill").addEventListener("keydown", e => { if(e.key==="Enter"||e.key===" "){ e.preventDefault(); togglePause(); } });
+$("#pauseBtn").addEventListener("click", togglePause);
+
+/* ── time off ───────────────────────────────────────────────────────────────*/
+$("#toAdd").addEventListener("click", async () => {
+  const date = $("#toDate").value.trim(), kind = $("#toKind").value;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { alert("Pick a date first."); return; }
+  const r = await api.addTimeoff({ date, kind, note:"" });
+  if (r && r.entries && STATE) STATE.timeoff = r.entries;
+  renderTimeoff(); render();
+  toast(`Time off added — ${date}`);
+});
+$("#toList").addEventListener("click", async (e) => {
+  const btn = e.target.closest(".tf-x"); if (!btn) return;
+  const date = btn.dataset.date;
+  const r = await api.removeTimeoff(date);
+  if (r && r.entries && STATE) STATE.timeoff = r.entries;
+  renderTimeoff(); render();
+  toast(`Removed ${date}`);
+});
+
+/* ── export CSV ─────────────────────────────────────────────────────────────*/
+$("#exportBtn").addEventListener("click", async () => {
+  const b = $("#exportBtn"); b.disabled = true; const orig = b.textContent; b.textContent = "Exporting…";
+  try {
+    const r = await api.exportCsv();
+    if (r && r.ok){ $("#exportTag").textContent = "Saved to " + (r.path||"Desktop"); toast("Attendance exported"); }
+    else { toast((r && r.message) || "Export failed", true); }
+  } finally { b.disabled = false; b.textContent = orig; }
 });
 
 /* pywebview injects window.pywebview AFTER the page's scripts run — loading

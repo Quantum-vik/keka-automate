@@ -152,6 +152,31 @@ jobs:
           WINDOWS_CERTIFICATE_PFX: ${{ secrets.WINDOWS_CERTIFICATE_PFX }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
 
+      # ── Build-correctness smoke test: RUN the compiled artifact before we
+      #    upload it, so a binary that compiles but is broken at runtime (missing
+      #    bundled data/module, bad entry point) fails the build instead of the
+      #    user's machine. macOS/Linux get the deep probe (--version + --serve +
+      #    /api/state + dashboard); Windows gets the --version launch check.
+      - name: Smoke test — macOS
+        if: runner.os == 'macOS'
+        run: |
+          exe="$(find build/Auto-Keka.app/Contents/MacOS -type f -perm +111 | head -1)"
+          [ -n "$exe" ] || { echo "no executable inside Auto-Keka.app"; exit 1; }
+          bash packaging/smoke_test.sh "$exe"
+
+      - name: Smoke test — Linux
+        if: runner.os == 'Linux'
+        run: bash packaging/smoke_test.sh out/Auto-Keka
+
+      - name: Smoke test — Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $out = & .\Auto-Keka.exe --version
+          Write-Host "smoke: $out"
+          if ($out -notmatch '^Auto-Keka ') { throw "smoke FAIL: unexpected --version output: $out" }
+          Write-Host "smoke: OK"
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}

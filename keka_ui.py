@@ -893,10 +893,29 @@ def run_browser():
     except KeyboardInterrupt: pass
 
 
+USAGE = (
+    "Auto-Keka — automatic Keka attendance\n"
+    "  Auto-Keka                 open the dashboard window (default)\n"
+    "  Auto-Keka --serve [port]  run the headless API (for the native client)\n"
+    "  Auto-Keka --punch in|out  clock in/out once (used by the scheduler)\n"
+    "  Auto-Keka --check         run the reauth watchdog\n"
+    "  Auto-Keka --version       print the version and exit\n"
+    "  Auto-Keka --help          show this help\n"
+)
+
+
 def main():
     # Headless dispatch — lets the compiled binary act as its own punch/check
     # tool for the scheduler:  Auto-Keka --punch in|out  ·  Auto-Keka --check
     args = sys.argv[1:]
+    # Trivial, side-effect-free flags first — these double as the CI build
+    # smoke test (a compiled binary that can't even print its version is broken).
+    if args[:1] in (["--version"], ["-v"]):
+        print(f"Auto-Keka {kc.APP_VERSION}")
+        return
+    if args[:1] in (["--help"], ["-h"]):
+        print(USAGE)
+        return
     if args[:1] == ["--punch"] and len(args) > 1 and args[1] in ("in", "out"):
         kc.run_punch(args[1], kc.log_path(f"keka_punch_{args[1]}.log"))
         return
@@ -904,6 +923,12 @@ def main():
         import keka_check
         keka_check.main()
         return
+    # An UNRECOGNIZED flag must NOT fall through to launching the GUI (that made
+    # e.g. `Auto-Keka --foo` open a window and hang in headless contexts). Only a
+    # bare invocation (no args) opens the dashboard.
+    if args and args[0].startswith("-") and args[0] not in ("--serve",):
+        print(f"unknown option: {args[0]}\n\n{USAGE}", file=sys.stderr)
+        sys.exit(2)
     if args[:1] == ["--serve"]:
         # Auto-Keka --serve [port] [--exit-with-parent]
         #   headless API for a native front-end (the Swift macOS client).

@@ -44,7 +44,11 @@ $ActChk = New-ScheduledTaskAction -Execute $Py -Argument "`"$Keka\keka_check.py`
 
 $TrigIn  = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $Weekdays -At $InTime
 $TrigOut = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $Weekdays -At $OutTime
-$TrigChk = New-ScheduledTaskTrigger -Daily  -At "10:00"
+# Every 6h, not once daily: a single daily slot is too easy to miss on a
+# machine that's off/asleep at that hour, and the check is silent unless the
+# remember-device cookie is actually near expiry.
+$TrigChk = New-ScheduledTaskTrigger -Once -At "10:00" `
+    -RepetitionInterval (New-TimeSpan -Hours 6) -RepetitionDuration (New-TimeSpan -Days 3650)
 $TrigLgn = New-ScheduledTaskTrigger -AtLogOn
 
 Register-ScheduledTask -Force -TaskPath "\Keka\" -TaskName "PunchIn"     -Action $ActIn  -Trigger $TrigIn  -Principal $Principal | Out-Null
@@ -52,7 +56,7 @@ Register-ScheduledTask -Force -TaskPath "\Keka\" -TaskName "PunchOut"    -Action
 Register-ScheduledTask -Force -TaskPath "\Keka\" -TaskName "Reauth"      -Action $ActChk -Trigger $TrigChk -Principal $Principal | Out-Null
 Register-ScheduledTask -Force -TaskPath "\Keka\" -TaskName "ReauthLogon" -Action $ActChk -Trigger $TrigLgn -Principal $Principal | Out-Null
 
-Write-Host "Installed Keka tasks (9 AM in / 6 PM out, Mon-Fri; reauth daily 10 AM + logon)." -ForegroundColor Green
+Write-Host "Installed Keka tasks (punch in/out Mon-Fri; reauth every 6h + logon)." -ForegroundColor Green
 Write-Host "View:   Get-ScheduledTask -TaskPath '\Keka\'"
 Write-Host "Remove: Get-ScheduledTask -TaskPath '\Keka\' | Unregister-ScheduledTask -Confirm:`$false"
 Write-Host "Logs:   $Keka\logs\"

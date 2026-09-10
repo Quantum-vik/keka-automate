@@ -1,11 +1,17 @@
 """
-keka_check.py — reauth watchdog (run daily + at login by the scheduler).
+keka_check.py — reauth watchdog (run every ~6h + at login by the scheduler).
 
-Keka's "remember this device" cookie (which lets us skip the OTP) lasts ~14 days
-and does NOT refresh on auto-relogin. So roughly every 14 days a real OTP is
-needed. This script checks that cookie's expiry; if it's about to lapse it opens
-keka_setup.py (a visible browser) and alerts you (notification + blocking dialog)
-so you can enter the OTP. Otherwise it exits quietly — no browser, no interruption.
+Keka's "remember this device" cookie (which lets us skip the OTP) lasts ~14
+days. Ordinary session re-saves do NOT extend it; only a full password relogin
+mints a fresh one — so when the saved session stays healthy for two straight
+weeks (no relogin ever needed), the cookie quietly runs out anyway. This script
+checks the cookie's expiry; if it's about to lapse it opens keka_setup.py (a
+visible browser) and alerts you (notification + blocking dialog) so you can
+enter the OTP. Otherwise it exits quietly — no browser, no interruption.
+
+It must run FREQUENTLY: a once-daily check on a machine that happens to be
+asleep at that hour can miss the whole warning window (this app once sailed
+2 days past expiry that way).
 
 Notifications and the dialog work on macOS, Linux, and Windows.
 """
@@ -24,9 +30,8 @@ BUFFER_DAYS = 1.5  # prompt this many days before the remember-cookie expires
 TITLE = "Keka Attendance"
 
 
-def _ps_str(s):
-    """Wrap s as a safe PowerShell single-quoted string literal ('' escapes ')."""
-    return "'" + str(s).replace("'", "''") + "'"
+# Shared with the punch scripts (they alert on failed punches the same way).
+_ps_str = kc._ps_str
 
 
 def _has_display():
@@ -37,35 +42,8 @@ def _has_display():
 
 
 def notify(message):
-    """Best-effort desktop notification (non-blocking). Silent if unsupported."""
-    plat = sys.platform
-    try:
-        if plat == "darwin":
-            subprocess.run(
-                ["osascript", "-e",
-                 f'display notification "{message}" with title "{TITLE}" sound name "Glass"'],
-                check=False,
-            )
-        elif plat.startswith("linux"):
-            if shutil.which("notify-send"):
-                subprocess.run(["notify-send", TITLE, message], check=False)
-        elif plat.startswith("win"):
-            # PowerShell tray balloon — load both assemblies, pump the message
-            # queue (DoEvents) so the balloon actually renders, then dispose.
-            ps = (
-                'Add-Type -AssemblyName System.Windows.Forms;'
-                'Add-Type -AssemblyName System.Drawing;'
-                '$n=New-Object System.Windows.Forms.NotifyIcon;'
-                '$n.Icon=[System.Drawing.SystemIcons]::Information;'
-                '$n.BalloonTipTitle=' + _ps_str(TITLE) + ';'
-                '$n.BalloonTipText=' + _ps_str(message) + ';'
-                '$n.Visible=$true;$n.ShowBalloonTip(5000);'
-                '[System.Windows.Forms.Application]::DoEvents();'
-                'Start-Sleep -Milliseconds 6000;$n.Dispose();'
-            )
-            subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=False)
-    except Exception:
-        pass
+    """Best-effort desktop notification — the shared keka_common implementation."""
+    kc.notify(message, title=TITLE)
 
 
 def confirm_dialog(message):

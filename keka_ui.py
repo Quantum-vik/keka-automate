@@ -36,6 +36,14 @@ VENV_PY = sys.executable
 # prompt (window closed, phone tab gone) must not stall the backend forever.
 OTP_WAIT_SECS = 300
 
+# How often the background thread does a LIVE Keka probe (get_status loads the
+# full attendance SPA, which fans out into many API calls). This must stay
+# large: a 90s probe ran ~750 loads over a 19h session and tripped Keka's
+# "API rate limit exceeded". The UI stays fresh via the frontend's own 30s
+# get_state poll, which is LOCAL (no Keka) — so the live probe only needs to
+# reconcile out-of-band punches occasionally.
+LIVE_PROBE_SECS = 900   # 15 minutes
+
 
 # ─── Backend: all state + actions, push-mechanism-agnostic (self.emit) ────────
 class Backend:
@@ -105,19 +113,24 @@ class Backend:
         time.sleep(2)
         while True:
             try:
-                with self._pw_lock:
-                    s = kc.get_status()
-                if s in ("in", "out"):
-                    self._status, self._alive = s, True
-                elif s == "dead":
-                    # Definitive: the probe was bounced to the login flow.
-                    self._alive = False
-                # None = transient/unknown (SPA settling, maintenance page) —
-                # keep the previous verdict instead of flashing "Session expired".
-                self.push_state()
+                # Skip the live Keka probe entirely when there's nothing to
+                # reconcile — no session, or automation paused. Cuts needless
+                # load on the HR portal (get_status would only return None/quick
+                # anyway, but this avoids even launching the browser).
+                if os.path.exists(kc.SESSION_FILE) and not kc.is_paused():
+                    with self._pw_lock:
+                        s = kc.get_status()
+                    if s in ("in", "out"):
+                        self._status, self._alive = s, True
+                    elif s == "dead":
+                        # Definitive: the probe was bounced to the login flow.
+                        self._alive = False
+                    # None = transient/unknown (SPA settling, maintenance page) —
+                    # keep the previous verdict instead of flashing "Session expired".
+                    self.push_state()
             except Exception:
                 pass   # deps missing / browser failed — leave verdict unchanged
-            time.sleep(90)
+            time.sleep(LIVE_PROBE_SECS)
 
     # ── JS API methods ──────────────────────────────────────────────────────
     def get_state(self):

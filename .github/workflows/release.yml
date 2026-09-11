@@ -160,8 +160,13 @@ jobs:
       - name: Smoke test — macOS
         if: runner.os == 'macOS'
         run: |
-          exe="$(find build/Auto-Keka.app/Contents/MacOS -type f -perm +111 | head -1)"
-          [ -n "$exe" ] || { echo "no executable inside Auto-Keka.app"; exit 1; }
+          app="build/Auto-Keka.app"
+          # Use CFBundleExecutable — the app's DEFINED entry binary. A blind
+          # `find -perm +111 | head -1` grabs whatever executable comes first,
+          # which is Playwright's bundled node/ffmpeg, not our binary.
+          name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")"
+          exe="$app/Contents/MacOS/$name"
+          [ -x "$exe" ] || { echo "app executable not found: $exe"; exit 1; }
           bash packaging/smoke_test.sh "$exe"
 
       - name: Smoke test — Linux
@@ -207,10 +212,12 @@ jobs:
         run: |
           cd core
           unzip -q Auto-Keka-macos.zip
-          # Nuitka names the binary after the script, and the app-name option
-          # only sets the display name — so find it rather than hardcode it.
-          exe=$(find Auto-Keka.app/Contents/MacOS -type f -perm +111 | head -1)
-          [ -n "$exe" ] || { echo "no executable inside Auto-Keka.app"; exit 1; }
+          # CFBundleExecutable is the app's DEFINED entry binary — the one that
+          # answers `--serve`. A blind `find -perm +111 | head -1` would grab
+          # Playwright's bundled node/ffmpeg instead and bundle THAT as the core.
+          name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' Auto-Keka.app/Contents/Info.plist)"
+          exe="Auto-Keka.app/Contents/MacOS/$name"
+          [ -x "$exe" ] || { echo "core executable not found: $exe"; exit 1; }
           echo "path=$PWD/$exe" >> "$GITHUB_OUTPUT"
           echo "found core: $exe"
 

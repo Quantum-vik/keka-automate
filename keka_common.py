@@ -1174,16 +1174,29 @@ def classify_session_page(url, has_out_btn, has_in_btn):
 
 def get_status():
     """Headless probe: 'in'/'out' (logged in), 'dead' (login page — session
-    expired), or None (unknown/transient — see classify_session_page)."""
+    expired), 'ratelimited' (Keka returned HTTP 429 — back off!), or None
+    (unknown/transient — see classify_session_page)."""
     if not os.path.exists(SESSION_FILE):
         return None
     with sync_playwright() as p:
         b = p.chromium.launch(headless=True)
         ctx = b.new_context(storage_state=SESSION_FILE)
         page = ctx.new_page()
+        # If Keka starts 429-ing us, STOP probing — hammering a rate-limited
+        # portal only extends the block. Flag it so the caller backs off.
+        flags = {"ratelimited": False}
+        def _watch(resp):
+            try:
+                if resp.status == 429:
+                    flags["ratelimited"] = True
+            except Exception:
+                pass
+        page.on("response", _watch)
         try:
             page.goto(ATTENDANCE_URL, wait_until="domcontentloaded", timeout=30_000)
             page.wait_for_timeout(5000)
+            if flags["ratelimited"]:
+                return "ratelimited"
             return classify_session_page(
                 page.url,
                 page.locator('text="Web Clock-out"').count() > 0,

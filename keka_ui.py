@@ -56,6 +56,7 @@ class Backend:
         self._otp_value = None
         self._status = None
         self._alive = None   # live session verdict: True/False, None = not probed yet
+        self._rate_limited = False   # Keka told us 429 — the UI shows a backoff notice
         self.log = logging.getLogger("keka_ui")
         self.log.setLevel(logging.INFO)
         self.log.handlers = [logging.NullHandler()]
@@ -111,6 +112,7 @@ class Backend:
 
     def _status_refresher(self):
         time.sleep(2)
+        wait = LIVE_PROBE_SECS
         while True:
             try:
                 # Skip the live Keka probe entirely when there's nothing to
@@ -120,6 +122,22 @@ class Backend:
                 if os.path.exists(kc.SESSION_FILE) and not kc.is_paused():
                     with self._pw_lock:
                         s = kc.get_status()
+                    if s == "ratelimited":
+                        # Keka is 429-ing us — probing more only extends the
+                        # block. Exponential backoff (cap 1h) until it clears.
+                        wait = min(wait * 2, 3600)
+                        if not self._rate_limited:
+                            self.push_log("Keka is rate-limiting us — pausing "
+                                          "status checks and backing off.", "out")
+                        self._rate_limited = True
+                        self.push_state()
+                        time.sleep(wait)
+                        continue
+                    # Any healthy answer clears the backoff.
+                    if self._rate_limited:
+                        self.push_log("Keka access recovered — resuming.", "in")
+                    self._rate_limited = False
+                    wait = LIVE_PROBE_SECS
                     if s in ("in", "out"):
                         self._status, self._alive = s, True
                     elif s == "dead":
@@ -130,7 +148,7 @@ class Backend:
                     self.push_state()
             except Exception:
                 pass   # deps missing / browser failed — leave verdict unchanged
-            time.sleep(LIVE_PROBE_SECS)
+            time.sleep(wait)
 
     # ── JS API methods ──────────────────────────────────────────────────────
     def get_state(self):
@@ -172,6 +190,7 @@ class Backend:
             "stats": kc.attendance_stats(hist, env.get("KEKA_IN_TIME", "09:00")),
             "version": kc.APP_VERSION,
             "update": self._update,
+            "rateLimited": self._rate_limited,
             "config": {"url": env.get("KEKA_BASE_URL", ""), "email": env.get("KEKA_EMAIL", ""),
                        "configured": configured},
         }

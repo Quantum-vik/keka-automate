@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 
 import keka_common as kc
+from conftest import write_session
 
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
@@ -172,3 +173,39 @@ def test_run_punch_skips_on_timeoff(tmp_path, monkeypatch):
     kc.run_punch("out", str(tmp_path / "punch.log"))
     hist = kc.read_history()
     assert any("holiday day" in h["msg"] for h in hist)
+
+
+# ── rate-limit detection (get_status flags Keka 429 -> "ratelimited") ─────────
+def test_get_status_flags_429(session_file, monkeypatch):
+    """A 429 from Keka must surface as 'ratelimited' so callers back off,
+    never as 'dead' (which would wrongly declare the session expired)."""
+    write_session(session_file, remember_expires=1)   # any session file present
+
+    class _Resp:
+        status = 429
+
+    class _Page:
+        url = "https://acme.keka.com/#/me/attendance"
+        def __init__(self): self._cb = None
+        def on(self, ev, cb): self._cb = cb
+        def goto(self, *a, **k): self._cb(_Resp())      # fire a 429 response
+        def wait_for_timeout(self, *a): pass
+        def locator(self, *a):
+            class _L:
+                def count(self_): return 0
+            return _L()
+
+    class _Ctx:
+        def new_page(self): return _Page()
+    class _Browser:
+        def new_context(self, **k): return _Ctx()
+        def close(self): pass
+    class _PW:
+        chromium = type("C", (), {"launch": lambda self, **k: _Browser()})()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    import keka_common as kc2
+    monkeypatch.setattr(kc2, "sync_playwright", lambda: _PW())
+    monkeypatch.setattr(kc2, "TENANT_HOST", "acme.keka.com")
+    assert kc2.get_status() == "ratelimited"

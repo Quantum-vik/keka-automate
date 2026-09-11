@@ -805,6 +805,7 @@ function normalize(s) {
   if (!s.stats)   s.stats   = hasBridge() ? {week:{days:0,minutes:0,late:0},month:{days:0,minutes:0,late:0}}
                                           : (MOCK.stats || {week:{days:0,minutes:0,late:0},month:{days:0,minutes:0,late:0}});
   if (s.paused === undefined) s.paused = false;
+  if (s.rateLimited === undefined) s.rateLimited = false;
   if (!s.update) s.update = { available:false, current:s.version||"", latest:null, url:"", notes:"" };
   return s;
 }
@@ -957,6 +958,12 @@ function renderUpdateBanner(){
 
 function renderOffBanner(){
   const b = $("#offBanner");
+  if (STATE.rateLimited){
+    b.style.display = "flex"; b.classList.remove("paused");
+    $("#offIco").textContent = "🐢";
+    $("#offText").textContent = "Keka is rate-limiting us — status checks are backing off automatically. Your scheduled punches still run.";
+    return;
+  }
   if (STATE.paused){
     b.style.display = "flex"; b.classList.add("paused");
     $("#offIco").textContent = "⏸";

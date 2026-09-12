@@ -806,6 +806,7 @@ function normalize(s) {
                                           : (MOCK.stats || {week:{days:0,minutes:0,late:0},month:{days:0,minutes:0,late:0}});
   if (s.paused === undefined) s.paused = false;
   if (s.rateLimited === undefined) s.rateLimited = false;
+  if (s.needsReauth === undefined) s.needsReauth = false;
   if (!s.update) s.update = { available:false, current:s.version||"", latest:null, url:"", notes:"" };
   return s;
 }
@@ -823,19 +824,30 @@ function render() {
 
   // Session health verdict from the backend: true = verified alive (live probe
   // or an unexpired token), false = expired, null/undefined = not yet known.
-  const dead = STATE.sessionAlive === false;
+  // Three states, not two:
+  //   needsReauth  = session dead AND the device pass is gone → a REAL OTP sign-in
+  //   reconnecting = session dead BUT device pass still valid → app re-logs in
+  //                  silently (no OTP); show a calm notice, never the alarm
+  const notAlive     = STATE.sessionAlive === false;
+  const needsReauth  = STATE.needsReauth === true;
+  const reconnecting = notAlive && !needsReauth;
+  const dead = notAlive;             // timer/live still gate on "not verified alive"
   const live = clockedIn && !dead;   // "clocked in" is only trustworthy while the session is
 
   // hero
   $("#statusDot").style.background = live ? "var(--present)" : "var(--out)";
   $("#statusDot").classList.toggle("live", live);   // pulse only on a live session
-  $("#statusText").textContent = dead ? "Session expired" : clockedIn ? "You're clocked in" : "You're clocked out";
+  $("#statusText").textContent = needsReauth ? "Session expired"
+                               : reconnecting ? "Reconnecting…"
+                               : clockedIn ? "You're clocked in" : "You're clocked out";
   $("#dateText").textContent = new Date(now).toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});
   // On a dead session the timer must FREEZE (we can't know the real state), not keep counting.
   const worked = (live ? now : (STATE.clockOutAt || Math.min(now, cOut))) - cIn;
   $("#timer").textContent = fmtDur(worked);
-  $("#punchLine").textContent = dead
+  $("#punchLine").textContent = needsReauth
     ? "Signed-in session expired — use “Sign in again” on the Device pass card"
+    : reconnecting
+    ? "Re-establishing your Keka session automatically — no action needed."
     : clockedIn
     ? `Clocked in at ${fmtHM(new Date(cIn))} · by automation`
     : `Clocked out at ${fmtHM(new Date(STATE.clockOutAt||cOut))} · ${fmtDur((STATE.clockOutAt||cOut)-cIn)} total`;
@@ -854,19 +866,23 @@ function render() {
   $("#nextTime").textContent  = when;
   $("#countdown").textContent = fmtCountdown(target - now);
 
-  // session health card — driven by the real token/probe verdict, not a timer
+  // session health card — driven by the real token/probe verdict, not a timer.
+  // The OTP button and "expired" copy appear ONLY when the device pass is
+  // actually gone (needsReauth). While reconnecting, the pass is still valid —
+  // show the days left, no alarm, no OTP prompt.
   const days = STATE.sessionDaysLeft ?? 0;
-  const low = dead || days <= 3;
+  const low = needsReauth || days <= 3;
   $("#sessDot").style.background = low ? "var(--out)" : "var(--present)";
   $("#sessBar").style.background = low ? "linear-gradient(90deg,#f0a04a,#e8933c)" : "var(--teal-grad)";
-  $("#reloginBtn").style.display = dead ? "block" : "none";
-  if (dead) {
+  $("#reloginBtn").style.display = needsReauth ? "block" : "none";
+  if (needsReauth) {
     $("#sessDays").textContent = "Session expired";
     $("#sessExpiry").textContent = "Sign in again to resume automation";
     $("#sessBar").style.width = "0%";
   } else {
     const expiry = new Date(); expiry.setDate(expiry.getDate() + days);
-    const verified = STATE.sessionAlive === true ? " · verified" : "";
+    const verified = STATE.sessionAlive === true ? " · verified"
+                   : reconnecting ? " · reconnecting…" : "";
     $("#sessDays").textContent = `${days} of 14 days left`;
     $("#sessExpiry").textContent = `Re-auth by ${expiry.toLocaleDateString("en-US",{month:"short",day:"numeric"})}${verified}`;
     $("#sessBar").style.width = (days/14*100) + "%";

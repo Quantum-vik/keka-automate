@@ -57,6 +57,8 @@ class Backend:
         self._status = None
         self._alive = None   # live session verdict: True/False, None = not probed yet
         self._rate_limited = False   # Keka told us 429 — the UI shows a backoff notice
+        self._needs_reauth = False   # session dead AND device pass gone → real OTP needed
+        self._reauth_tried = False   # guard: attempt the silent recovery only once per lapse
         self.log = logging.getLogger("keka_ui")
         self.log.setLevel(logging.INFO)
         self.log.handlers = [logging.NullHandler()]
@@ -140,9 +142,32 @@ class Backend:
                     wait = LIVE_PROBE_SECS
                     if s in ("in", "out"):
                         self._status, self._alive = s, True
+                        self._needs_reauth = self._reauth_tried = False
                     elif s == "dead":
-                        # Definitive: the probe was bounced to the login flow.
-                        self._alive = False
+                        # Bounced to login. This is NOT necessarily "sign in with
+                        # an OTP" — while the device pass (remember cookie) is
+                        # valid, a silent password re-login (no OTP) fixes it. So:
+                        #   device pass valid  → recover quietly, don't alarm
+                        #   device pass gone   → genuinely needs the OTP flow
+                        if kc.session_health().get("remember_valid") and not self._reauth_tried:
+                            self._reauth_tried = True     # attempt the silent fix once
+                            self.push_log("Re-authenticating with Keka…", "info")
+                            # A None-returning OTP getter means: if Keka somehow
+                            # still demands an OTP, don't block — fall through to
+                            # the genuine needs-reauth state below.
+                            with self._pw_lock:
+                                ok = kc.interactive_login(lambda retry=False: None,
+                                                          self.log, headless=True)
+                            if ok:
+                                self._alive, self._needs_reauth = True, False
+                            else:
+                                self._alive, self._needs_reauth = False, True
+                        elif not kc.session_health().get("remember_valid"):
+                            self._alive, self._needs_reauth = False, True
+                        else:
+                            # recovery already attempted this cycle — stay quiet,
+                            # the next punch/refresh will re-establish the session
+                            self._alive = False
                     # None = transient/unknown (SPA settling, maintenance page) —
                     # keep the previous verdict instead of flashing "Session expired".
                     self.push_state()
@@ -191,6 +216,7 @@ class Backend:
             "version": kc.APP_VERSION,
             "update": self._update,
             "rateLimited": self._rate_limited,
+            "needsReauth": self._needs_reauth,
             "config": {"url": env.get("KEKA_BASE_URL", ""), "email": env.get("KEKA_EMAIL", ""),
                        "configured": configured},
         }

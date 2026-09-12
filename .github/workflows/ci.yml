@@ -52,6 +52,12 @@ jobs:
         if: runner.os != 'Windows'
         run: ./.venv/bin/python .github/scripts/smoke.py
 
+      # setup.sh installs WebKitGTK system-wide; the app runs from .venv. Guard
+      # the bridge between them so the window can't silently regress to the browser.
+      - name: Native window toolkit reachable from .venv — Linux
+        if: runner.os == 'Linux'
+        run: ./.venv/bin/python -c "import keka_doctor as d; b = d._native_window_backend(); print('native window:', b); assert b, 'pywebview would fall back to the browser'"
+
       - name: Smoke test — Windows
         if: runner.os == 'Windows'
         shell: pwsh

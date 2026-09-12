@@ -45,6 +45,24 @@ def _schedule_installed():
     return None
 
 
+def _native_window_backend():
+    """Linux: can pywebview draw its WebKitGTK window from this interpreter?
+    Returns e.g. 'WebKit2 4.1', or None (the UI then opens in the browser).
+    Only resolves GObject typelibs — never opens a window."""
+    try:
+        import gi
+        gi.require_version("Gtk", "3.0")
+    except (ImportError, ValueError):
+        return None
+    for v in ("4.1", "4.0"):
+        try:
+            gi.require_version("WebKit2", v)
+            return f"WebKit2 {v}"
+        except ValueError:
+            continue
+    return None
+
+
 def main():
     print(f"Auto-Keka doctor — {datetime.now():%Y-%m-%d %H:%M}")
     print(f"  data dir: {kc.DATA_DIR}\n")
@@ -63,6 +81,13 @@ def main():
         _report(BAD, "Playwright Chromium",
                 "missing/stale — run: python -m playwright install chromium")
         failures += 1
+    if sys.platform.startswith("linux"):     # non-fatal: the browser fallback works
+        gtk = _native_window_backend()
+        if gtk:
+            _report(OK, "native window (GTK)", gtk)
+        else:
+            _report(WARN, "native window (GTK)",
+                    "unavailable — UI opens in your browser; run: ./setup.sh --phase heavy")
 
     # 2) configuration
     env = kc._load_env()

@@ -14,6 +14,18 @@ The 2FA OTP is entered in the window; login runs headless (no browser popup).
 Everything you do is recorded in logs/history.jsonl (previous-session info).
 """
 
+# Compiled Linux build: PyGObject (gi) is bundled, but GLib/GObject/girepository
+# and the typelibs must come from the user's system, matching the GTK/WebKitGTK
+# pywebview loads there. The build host (Ubuntu 22.04, GLib 2.72) is older than
+# most users' distros, whose GTK needs newer GLib symbols than it has.
+# nuitka-project-if: {OS} == "Linux":
+#    nuitka-project: --noinclude-dlls=libglib-2.0.so*
+#    nuitka-project: --noinclude-dlls=libgobject-2.0.so*
+#    nuitka-project: --noinclude-dlls=libgio-2.0.so*
+#    nuitka-project: --noinclude-dlls=libgmodule-2.0.so*
+#    nuitka-project: --noinclude-dlls=libgirepository-1.0.so*
+#    nuitka-project: --noinclude-data-files=girepository
+
 import os
 import sys
 import json

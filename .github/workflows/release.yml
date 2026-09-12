@@ -15,6 +15,12 @@ on:
   push:
     tags:
       - 'v*'
+  # Dry-run the builds (and the Linux native-window check) on PRs that change
+  # the release plumbing, so it's proven before a tag. Nothing is published.
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - 'packaging/**'
 
 permissions:
   contents: write
@@ -72,6 +78,17 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      # pywebview draws the Linux window through PyGObject; without it compiled
+      # in, the binary always fell back to the browser. <3.51 builds against
+      # girepository-1.0, which 22.04 has and newer distros still ship. The GTK
+      # stack itself is taken from the user's system (see keka_ui.py header).
+      - name: Install PyGObject (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libgirepository1.0-dev libcairo2-dev pkg-config
+          pip install "PyGObject<3.51"
 
       - name: Generate app icons
         shell: bash
@@ -187,6 +204,41 @@ jobs:
           name: ${{ matrix.name }}
           path: ${{ matrix.name }}.zip
 
+  # ── Linux: the compiled app opens its native window ─────────────────────────
+  # Runs the 22.04-built binary on the build distro AND a newer one: the GTK
+  # stack comes from the host, so a binary that only works where it was built
+  # (bundled GLib shadowing the system's) fails here instead of on users.
+  linux-native-window:
+    name: linux native window (${{ matrix.os }})
+    needs: build
+    if: always() && !cancelled()
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: Auto-Keka-linux
+
+      - name: Install WebKitGTK runtime + virtual display
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y gir1.2-webkit2-4.1 xvfb
+
+      - name: Native window check
+        env:
+          # Runners restrict unprivileged user namespaces, which WebKit's web
+          # process sandbox needs; the check only cares that WebKitGTK loads.
+          WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS: "1"
+        run: |
+          unzip -q Auto-Keka-linux.zip
+          chmod +x Auto-Keka
+          xvfb-run -a bash packaging/native_window_check.sh ./Auto-Keka 45
+
   # ── Native macOS client (SwiftUI menu-bar app over the compiled core) ───────
   # Reuses the macOS binary the matrix above already produced: that binary IS
   # keka_ui.py compiled, so it already answers `--serve`. Nothing extra is
@@ -249,8 +301,9 @@ jobs:
   release:
     needs: [build, macos-native]
     # Publish whatever compiled successfully; if nothing did, fail with no
-    # release (never fall back to shipping source).
-    if: always() && !cancelled()
+    # release (never fall back to shipping source). Tags only — PR runs are
+    # dry runs.
+    if: always() && !cancelled() && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

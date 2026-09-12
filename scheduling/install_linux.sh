@@ -35,11 +35,13 @@ fi
 
 # Clock times from .env (KEKA_IN_TIME / KEKA_OUT_TIME, "HH:MM"), default 09:00/18:00.
 # The GUI writes these to the per-user data dir (must match keka_common.py
-# DATA_DIR); fall back to a legacy repo-local .env.
+# DATA_DIR); fall back to a legacy repo-local .env. `|| true`: under pipefail a
+# missing file or key made grep's exit 1 kill the script before the defaults
+# applied (setup.sh writes a .env with no times).
 ENV_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/Auto-Keka/.env"
 [ -f "$ENV_FILE" ] || ENV_FILE="$KEKA/.env"
-IN_TIME=$(grep -E '^KEKA_IN_TIME=' "$ENV_FILE" 2>/dev/null | cut -d= -f2 | tr -d ' \r"')
-OUT_TIME=$(grep -E '^KEKA_OUT_TIME=' "$ENV_FILE" 2>/dev/null | cut -d= -f2 | tr -d ' \r"')
+IN_TIME=$(grep -E '^KEKA_IN_TIME=' "$ENV_FILE" 2>/dev/null | cut -d= -f2 | tr -d ' \r"' || true)
+OUT_TIME=$(grep -E '^KEKA_OUT_TIME=' "$ENV_FILE" 2>/dev/null | cut -d= -f2 | tr -d ' \r"' || true)
 IN_H=$(printf '%s' "${IN_TIME:-09:00}"  | cut -d: -f1 | sed 's/^0//'); IN_H=${IN_H:-0}
 IN_M=$(printf '%s' "${IN_TIME:-09:00}"  | cut -d: -f2 | sed 's/^0*//'); IN_M=${IN_M:-0}
 OUT_H=$(printf '%s' "${OUT_TIME:-18:00}" | cut -d: -f1 | sed 's/^0//'); OUT_H=${OUT_H:-0}
@@ -51,8 +53,21 @@ CRON_OUT="$OUT_M $OUT_H * * 1-5 $PY $KEKA/keka_punch_out.py >> $LOG 2>&1"
 # and the check is silent unless the cookie is actually near expiry.
 CRON_CHK="0 */6 * * * ${GUI_ENV}$PY $KEKA/keka_check.py >> $LOG 2>&1"
 
-( crontab -l 2>/dev/null | grep -v "keka_punch\|keka_check"; \
-  echo "$CRON_IN"; echo "$CRON_OUT"; echo "$CRON_CHK" ) | crontab -
+# cron can't open `>> $LOG` in a missing dir, and then never runs the job.
+mkdir -p "$(dirname "$LOG")"
+
+# Keep everyone else's jobs, replace ours. Read first: `crontab -l` exits 1 on an
+# empty crontab, and grep -v exits 1 when nothing survives (e.g. re-applying a
+# schedule that is ALL keka jobs). Under pipefail either aborted the rewrite and
+# fed `crontab -` nothing — failing on a fresh machine and wiping the schedule
+# on every re-apply.
+EXISTING="$(crontab -l 2>/dev/null || true)"
+{
+    if [ -n "$EXISTING" ]; then
+        printf '%s\n' "$EXISTING" | grep -v "keka_punch\|keka_check" || true
+    fi
+    echo "$CRON_IN"; echo "$CRON_OUT"; echo "$CRON_CHK"
+} | crontab -
 
 echo "Installed Keka cron jobs:"
 echo "  Punch in   ${IN_H}:$(printf '%02d' "$IN_M") Mon-Fri"

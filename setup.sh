@@ -79,6 +79,47 @@ fi
 
 VENV_PY=".venv/bin/python"   # always defined (heavy phase needs it too)
 
+# pywebview draws the Linux window with the distro's PyGObject (python3-gi), but
+# the app runs inside .venv, which can't see system packages — so the window
+# silently fell back to the browser even with WebKitGTK installed. PyGObject
+# can't be pip-installed without C headers, so link the system `gi` package into
+# the venv, and keep the link only if it really imports under the venv's Python.
+link_system_gi() {
+    if [ "$OS" != "Linux" ] || [ ! -x "$VENV_PY" ]; then
+        return 0
+    fi
+    if "$VENV_PY" -c "import gi" >/dev/null 2>&1; then
+        ok "PyGObject (gi) importable in .venv"
+        return 0
+    fi
+    local site base cand gi_dir=""
+    site="$("$VENV_PY" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+    if [ -e "$site/gi" ] && [ ! -L "$site/gi" ]; then
+        warn "A broken PyGObject is installed in .venv — the UI will open in your browser instead."
+        return 0
+    fi
+    # The interpreter the venv was built from sees dist-packages on Debian/Ubuntu;
+    # /usr/bin/python3 covers venvs made from a non-distro Python (e.g. CI's).
+    base="$("$VENV_PY" -c 'import sys; print(getattr(sys, "_base_executable", ""))')"
+    for cand in "$base" /usr/bin/python3; do
+        [ -n "$cand" ] && [ -x "$cand" ] || continue
+        gi_dir="$("$cand" -c 'import gi, os; print(os.path.dirname(gi.__file__))' 2>/dev/null)" \
+            && [ -n "$gi_dir" ] && break
+        gi_dir=""
+    done
+    if [ -z "$gi_dir" ]; then
+        warn "System PyGObject (python3-gi) not found — the UI will open in your browser instead."
+        return 0
+    fi
+    ln -sfn "$gi_dir" "$site/gi"
+    if "$VENV_PY" -c "import gi" >/dev/null 2>&1; then
+        ok "linked system PyGObject into .venv ($gi_dir)"
+    else
+        rm -f "$site/gi"
+        warn "System PyGObject doesn't match .venv's Python — the UI will open in your browser instead."
+    fi
+}
+
 # ── 1-3. Light deps: Python + venv + pip packages ─────────────────────────────
 if want light; then
 # ── 1. Python ─────────────────────────────────────────────────────────────────
@@ -101,6 +142,12 @@ b "Installing Python dependencies"
 "$VENV_PY" -m pip install --quiet --upgrade pip
 "$VENV_PY" -m pip install --quiet -r requirements.txt
 ok "playwright, pywebview, pytesseract, pillow installed"
+
+# Most desktop distros ship python3-gi already, so the first launch can be native.
+if [ "$OS" = "Linux" ]; then
+    b "Connecting the native window toolkit (PyGObject)"
+    link_system_gi
+fi
 fi  # want light
 
 if want heavy; then
@@ -177,6 +224,7 @@ if [ "$OS" = "Linux" ]; then
     else
         warn "For a native UI window install WebKitGTK + python-gobject; otherwise the UI opens in your browser."
     fi
+    link_system_gi
     ok "native-window deps attempted (browser fallback always works)"
 fi
 fi  # want heavy

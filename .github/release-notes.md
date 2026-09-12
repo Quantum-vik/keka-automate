@@ -20,6 +20,10 @@
   **macOS** `brew install tesseract` · **Windows** [UB-Mannheim installer](https://github.com/UB-Mannheim/tesseract) ·
   **Linux** `sudo apt install tesseract-ocr` (or your distro's package).
   The app tells you in-window if it's missing.
+- **Linux window:** the app draws its window with your system's WebKitGTK, which
+  Ubuntu desktop already includes. If it's missing the dashboard opens in your
+  browser instead; for the native window install `gir1.2-webkit2-4.1`
+  (Fedora `webkit2gtk4.1`, Arch `webkit2gtk-4.1`).
 
 ### ⚠️ First-open "unknown developer" warning
 The app isn't code-signed, so your OS may warn once:

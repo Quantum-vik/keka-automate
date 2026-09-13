@@ -56,11 +56,32 @@ def test_relative_argv0_resolves_against_containing_dir(layout, monkeypatch, tmp
     assert kc._resolve_app_executable(True, compiled, "", layout.phantom) == layout.launcher
 
 
-def test_bare_name_found_on_path(layout, monkeypatch):
+def test_bare_name_found_on_path_posix(layout, monkeypatch):
     os.chmod(layout.launcher, 0o755)
     monkeypatch.setenv("PATH", f"{layout.apps}{os.pathsep}{os.environ.get('PATH', '')}")
     compiled = onefile(original_argv0="Auto-Keka", containing_dir=None)
-    assert kc._resolve_app_executable(True, compiled, "", layout.phantom) == layout.launcher
+    assert kc._resolve_app_executable(True, compiled, "", layout.phantom, windows=False) == layout.launcher
+
+
+def test_windows_ignores_a_same_named_file_in_the_cwd(layout, monkeypatch, tmp_path):
+    # Windows which() looks in the cwd first; a repo checkout has Auto-Keka.bat.
+    cwd = tmp_path / "checkout"
+    cwd.mkdir()
+    (cwd / "Auto-Keka.bat").write_text("")
+    monkeypatch.chdir(cwd)
+    exe = layout.apps / "Auto-Keka.exe"
+    exe.write_text("")
+    compiled = onefile(original_argv0="Auto-Keka", containing_dir=str(layout.apps))
+    got = kc._resolve_app_executable(True, compiled, "", layout.phantom, windows=True)
+    assert got in (layout.launcher, str(exe))
+    assert "checkout" not in got
+
+
+def test_result_is_absolute(layout, monkeypatch):
+    monkeypatch.chdir(layout.apps)
+    compiled = onefile(original_argv0=os.path.join(".", "Auto-Keka"), containing_dir=None)
+    got = kc._resolve_app_executable(True, compiled, "", layout.phantom)
+    assert os.path.isabs(got) and got == layout.launcher
 
 
 def test_standalone_app_bundle_uses_argv0(tmp_path):

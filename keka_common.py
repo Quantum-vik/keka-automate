@@ -69,7 +69,7 @@ GITHUB_REPO = "Quantum-vik/keka-automate"
 FROZEN = "__compiled__" in globals()
 
 
-def _resolve_app_executable(frozen, compiled, argv0, executable):
+def _resolve_app_executable(frozen, compiled, argv0, executable, windows=None):
     """The file to launch this app again with (schedules, autostart, the punch
     buttons).
 
@@ -82,20 +82,31 @@ def _resolve_app_executable(frozen, compiled, argv0, executable):
     interpreter."""
     if not frozen:
         return executable
+    if windows is None:
+        windows = sys.platform.startswith("win")
     extract_dir = os.path.dirname(os.path.abspath(executable)) if getattr(compiled, "onefile", False) else None
+    containing = getattr(compiled, "containing_dir", None)
     candidates = []
     for raw in (getattr(compiled, "original_argv0", None), argv0):
         if not raw:
             continue
-        if os.sep in raw or (os.altsep and os.altsep in raw):
-            candidates.append(os.path.abspath(raw))
-        else:
-            candidates.append(shutil.which(raw))
-        containing = getattr(compiled, "containing_dir", None)
+        name = os.path.basename(raw)
+        # The launcher's own dir (Nuitka knows it) beats any lookup.
         if containing:
-            candidates.append(os.path.join(containing, os.path.basename(raw)))
+            candidates.append(os.path.join(containing, name))
+            if windows and not name.lower().endswith(".exe"):
+                candidates.append(os.path.join(containing, name + ".exe"))
+        if os.sep in raw or (os.altsep and os.altsep in raw):
+            candidates.append(raw)
+        elif not windows:
+            # POSIX only: Windows' which() searches the current dir first and
+            # would happily return e.g. a stray Auto-Keka.bat.
+            candidates.append(shutil.which(raw))
     for c in candidates:
-        if c and os.path.isfile(c) and not (extract_dir and os.path.dirname(c) == extract_dir):
+        if not c:
+            continue
+        c = os.path.abspath(c)
+        if os.path.isfile(c) and not (extract_dir and os.path.dirname(c) == extract_dir):
             return c
     return executable
 

@@ -6,6 +6,7 @@ silently never ran. These fake the layout with temp files; the release smoke
 test checks the real compiled binaries on each OS.
 """
 import os
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -56,6 +57,8 @@ def test_relative_argv0_resolves_against_containing_dir(layout, monkeypatch, tmp
     assert kc._resolve_app_executable(True, compiled, "", layout.phantom) == layout.launcher
 
 
+@pytest.mark.skipif(sys.platform.startswith("win"),
+                    reason="the real which() on a Windows host still searches the cwd")
 def test_bare_name_found_on_path_posix(layout, monkeypatch):
     os.chmod(layout.launcher, 0o755)
     monkeypatch.setenv("PATH", f"{layout.apps}{os.pathsep}{os.environ.get('PATH', '')}")

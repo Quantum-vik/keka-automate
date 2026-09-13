@@ -262,6 +262,14 @@ def chromium_installed():
     try:
         with sync_playwright() as p:
             _chromium_ok = os.path.exists(p.chromium.executable_path)
+            # executable_path is local, so without a protocol round-trip we'd
+            # close while Playwright's own init call is still in flight; its
+            # cancellation prints "Task was destroyed but it is pending!" and
+            # "Future exception was never retrieved … TargetClosedError".
+            try:
+                p.request.new_context().dispose()
+            except Exception:
+                pass
     except Exception:
         d = _playwright_browsers_dir()   # driver unavailable — fall back to a dir probe
         _chromium_ok = os.path.isdir(d) and any(

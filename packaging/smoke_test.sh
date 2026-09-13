@@ -8,6 +8,7 @@
 # include-module, an unbundled data dir (ui/), a bad entry point. This runs the
 # real artifact and fails the release build BEFORE such a binary ever ships:
 #   1. `--version` must print and exit 0  (proves it launches + all imports resolve)
+#      and `--app-path` must name this binary (what the scheduler relaunches)
 #   2. `--serve` must hand off a port+token, answer /api/state 200 with our
 #      version, and serve the bundled dashboard HTML  (proves data bundling +
 #      the whole backend actually work in the compiled build)
@@ -23,6 +24,16 @@ case "$out" in
   "Auto-Keka "*) ;;
   *) echo "smoke FAIL: unexpected --version output"; exit 1 ;;
 esac
+
+# Schedules, autostart and the punch buttons relaunch the app via --app-path's
+# answer. It must be THIS binary and must outlive the process: a onefile build
+# once named '<temp extraction dir>/python', which never existed.
+echo "smoke: $BIN --app-path (what schedules and autostart launch)"
+app="$("$BIN" --app-path)"
+echo "  -> $app"
+[ -f "$app" ] || { echo "smoke FAIL: --app-path is not a file: $app"; exit 1; }
+real() { python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$1"; }
+[ "$(real "$app")" = "$(real "$BIN")" ] || { echo "smoke FAIL: --app-path is not $BIN"; exit 1; }
 
 echo "smoke: $BIN --serve (handshake + /api/state + dashboard)"
 tmp="$(mktemp)"

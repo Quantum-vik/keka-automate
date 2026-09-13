@@ -515,7 +515,7 @@ class Backend:
         with self._pw_lock:
             kc.reload_config()
             if kc.FROZEN:   # compiled build: re-invoke this binary in punch mode
-                cmd = [sys.executable, "--punch", action]
+                cmd = [kc.APP_EXECUTABLE, "--punch", action]
             else:
                 script = "keka_punch_in.py" if action == "in" else "keka_punch_out.py"
                 cmd = [VENV_PY, os.path.join(kc.SCRIPT_DIR, script)]
@@ -971,6 +971,7 @@ USAGE = (
     "                            clock in/out once (the scheduler adds --scheduled)\n"
     "  Auto-Keka --check         run the reauth watchdog\n"
     "  Auto-Keka --version       print the version and exit\n"
+    "  Auto-Keka --app-path      print the path the scheduler launches and exit\n"
     "  Auto-Keka --help          show this help\n"
 )
 
@@ -986,6 +987,11 @@ def main():
         return
     if args[:1] in (["--help"], ["-h"]):
         print(USAGE)
+        return
+    if args[:1] == ["--app-path"]:
+        # What schedules/autostart will launch — the release smoke test checks
+        # this file exists (a compiled build once pointed them at a phantom path).
+        print(kc.APP_EXECUTABLE)
         return
     if args[:1] == ["--punch"] and len(args) > 1 and args[1] in ("in", "out"):
         kc.run_punch(args[1], kc.log_path(f"keka_punch_{args[1]}.log"),

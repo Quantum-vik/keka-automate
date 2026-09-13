@@ -60,7 +60,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Single source of truth for the app version. release.yml reads THIS for the
 # Nuitka product-version, and the in-app update check compares it against the
 # latest GitHub release tag — so bumping this one line is what a release needs.
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 GITHUB_REPO = "Quantum-vik/keka-automate"
 
 # True when running as a Nuitka-compiled binary (no source tree, no venv).

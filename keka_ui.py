@@ -967,7 +967,8 @@ USAGE = (
     "Auto-Keka — automatic Keka attendance\n"
     "  Auto-Keka                 open the dashboard window (default)\n"
     "  Auto-Keka --serve [port]  run the headless API (for the native client)\n"
-    "  Auto-Keka --punch in|out  clock in/out once (used by the scheduler)\n"
+    "  Auto-Keka --punch in|out [--scheduled]\n"
+    "                            clock in/out once (the scheduler adds --scheduled)\n"
     "  Auto-Keka --check         run the reauth watchdog\n"
     "  Auto-Keka --version       print the version and exit\n"
     "  Auto-Keka --help          show this help\n"
@@ -987,7 +988,8 @@ def main():
         print(USAGE)
         return
     if args[:1] == ["--punch"] and len(args) > 1 and args[1] in ("in", "out"):
-        kc.run_punch(args[1], kc.log_path(f"keka_punch_{args[1]}.log"))
+        kc.run_punch(args[1], kc.log_path(f"keka_punch_{args[1]}.log"),
+                     scheduled="--scheduled" in args[2:])
         return
     if args[:1] == ["--check"]:
         import keka_check

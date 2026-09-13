@@ -33,9 +33,7 @@ def _schedule_installed():
             return all(os.path.exists(os.path.join(la, f"com.keka.{n}.plist"))
                        for n in ("punchin", "punchout"))
         if sys.platform.startswith("linux"):
-            r = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
-            stdout = r.stdout or ""
-            return ("keka_punch_in.py" in stdout) or ("--punch in" in stdout)
+            return kc.linux_schedule_method() is not None
         if sys.platform.startswith("win"):
             r = subprocess.run(["schtasks", "/Query", "/TN", r"Keka\PunchIn"],
                                capture_output=True, text=True)
@@ -127,8 +125,12 @@ def main():
     # 4) schedule + license (non-fatal context)
     sched = _schedule_installed()
     if sched is True:
+        how = ""
+        if sys.platform.startswith("linux"):
+            how = {"systemd": " · catches up on wake", "cron": " · cron, on time only"}.get(
+                kc.linux_schedule_method(), "")
         _report(OK, "punch schedule", f"installed (in {env.get('KEKA_IN_TIME', '09:00')}, "
-                                      f"out {env.get('KEKA_OUT_TIME', '18:00')}, Mon-Fri)")
+                                      f"out {env.get('KEKA_OUT_TIME', '18:00')}, Mon-Fri{how})")
     elif sched is False:
         _report(WARN, "punch schedule", "not installed — apply it from Settings")
     else:

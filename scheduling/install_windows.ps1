@@ -38,8 +38,8 @@ $Weekdays  = @("Monday","Tuesday","Wednesday","Thursday","Friday")
 $Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
 
 # Arguments are quoted individually; Register-ScheduledTask handles the rest.
-$ActIn  = New-ScheduledTaskAction -Execute $Py -Argument "`"$Keka\keka_punch_in.py`""
-$ActOut = New-ScheduledTaskAction -Execute $Py -Argument "`"$Keka\keka_punch_out.py`""
+$ActIn  = New-ScheduledTaskAction -Execute $Py -Argument "`"$Keka\keka_punch_in.py`" --scheduled"
+$ActOut = New-ScheduledTaskAction -Execute $Py -Argument "`"$Keka\keka_punch_out.py`" --scheduled"
 $ActChk = New-ScheduledTaskAction -Execute $Py -Argument "`"$Keka\keka_check.py`""
 
 $TrigIn  = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $Weekdays -At $InTime

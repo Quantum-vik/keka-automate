@@ -33,9 +33,9 @@ if [ ! -x "$PY" ]; then
     exit 1
 fi
 
-# $1=label  $2=script  $3=logname  $4=calendar-block  $5=extra-keys
+# $1=label  $2=script  $3=logname  $4=calendar-block  $5=extra-keys  $6=extra-arg
 make_plist() {
-    local label="$1" script="$2" logname="$3" cal="$4" extra="$5"
+    local label="$1" script="$2" logname="$3" cal="$4" extra="$5" arg="${6:-}"
     cat > "$LA/$label.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -43,7 +43,7 @@ make_plist() {
 <dict>
     <key>Label</key><string>$label</string>
     <key>ProgramArguments</key>
-    <array><string>$PY</string><string>$KEKA/$script</string></array>
+    <array><string>$PY</string><string>$KEKA/$script</string>${arg:+<string>$arg</string>}</array>
     <key>StartCalendarInterval</key>
     $cal
     $extra
@@ -64,8 +64,10 @@ weekdays() {  # $1=hour  $2=minute
     echo "<array>$out</array>"
 }
 
-make_plist "com.keka.punchin"  "keka_punch_in.py"  "keka_punch_in.log"  "$(weekdays "$IN_H" "$IN_M")"  ""
-make_plist "com.keka.punchout" "keka_punch_out.py" "keka_punch_out.log" "$(weekdays "$OUT_H" "$OUT_M")" ""
+# launchd runs a calendar job missed during sleep as soon as the Mac wakes;
+# --scheduled makes that late run respect the same-day window (keka_common).
+make_plist "com.keka.punchin"  "keka_punch_in.py"  "keka_punch_in.log"  "$(weekdays "$IN_H" "$IN_M")"  "" "--scheduled"
+make_plist "com.keka.punchout" "keka_punch_out.py" "keka_punch_out.log" "$(weekdays "$OUT_H" "$OUT_M")" "" "--scheduled"
 # Reauth cadence: the 10:00 calendar beat alone once missed a whole expiry
 # window (machine asleep at 10:00 every day for a week → cookie lapsed with
 # zero warnings). StartInterval fires every 6h of uptime regardless of the

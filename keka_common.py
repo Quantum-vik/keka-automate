@@ -23,6 +23,7 @@ import shutil
 import base64
 import logging
 import tempfile
+import shlex
 import subprocess
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -376,6 +377,148 @@ def _parse_hhmm(s, dh, dm):
         return dh, dm
 
 
+# ── Linux scheduler: systemd user timers (catch up on wake), cron fallback ────
+SYSTEMD_UNITS = ("keka-punch-in", "keka-punch-out", "keka-check")
+
+
+def _systemd_user_dir():
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(base, "systemd", "user")
+
+
+def _systemd_user_available():
+    """Can we manage user timers? KEKA_SCHEDULER=cron forces the cron path."""
+    if os.environ.get("KEKA_SCHEDULER", "").lower() == "cron":
+        return False
+    try:
+        return subprocess.run(["systemctl", "--user", "show-environment"],
+                              capture_output=True, timeout=15).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _systemd_exec_arg(arg):
+    """Quote one ExecStart= argument: systemd expands % specifiers and $VARS."""
+    arg = str(arg).replace("\\", "\\\\").replace('"', '\\"')
+    return '"' + arg.replace("%", "%%").replace("$", "$$") + '"'
+
+
+def _linux_jobs(in_cmd, out_cmd, check_cmd, ih, im, oh, om):
+    jobs = [("keka-punch-in", "Auto-Keka clock-in", in_cmd, f"Mon..Fri {ih:02d}:{im:02d}"),
+            ("keka-punch-out", "Auto-Keka clock-out", out_cmd, f"Mon..Fri {oh:02d}:{om:02d}")]
+    if check_cmd:
+        # Every 6h, not once daily: one slot is too easy to sleep through, and
+        # the check is silent unless the device pass is near expiry.
+        jobs.append(("keka-check", "Auto-Keka sign-in watchdog", check_cmd, "*-*-* 00/6:00"))
+    return jobs
+
+
+def _strip_keka_cron_lines():
+    """Remove our jobs from the crontab (leaving everyone else's). → bool ok."""
+    cur = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+    lines = (cur.stdout or "").splitlines() if cur.returncode == 0 else []
+    keep = [l for l in lines if not _is_keka_cron_line(l)]
+    if keep == lines:
+        return True
+    r = subprocess.run(["crontab", "-"], input="".join(l + "\n" for l in keep),
+                       capture_output=True, text=True)
+    return r.returncode == 0
+
+
+def _is_keka_cron_line(line):
+    # Source installs run keka_*.py; the compiled app runs `<binary> --punch in|out`.
+    return any(k in line for k in ("keka_punch", "keka_check", "--punch in", "--punch out"))
+
+
+def install_schedule_linux(in_cmd, out_cmd, check_cmd=None, in_time="09:00",
+                           out_time="18:00", log_file=None):
+    """Install the Mon–Fri punch schedule. → {"ok", "method", "linger"}.
+
+    Prefers systemd user timers: a calendar timer that elapses while the laptop
+    sleeps fires on wake, and Persistent=true catches up runs missed while it was
+    off or logged out — cron silently drops both. Commands carry --scheduled so
+    run_punch only catches up inside the same-day window. Falls back to cron
+    (on-time only) where there's no systemd user manager."""
+    ih, im = _parse_hhmm(in_time, 9, 0)
+    oh, om = _parse_hhmm(out_time, 18, 0)
+    log_file = log_file or log_path("cron.log")
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+    jobs = _linux_jobs(in_cmd, out_cmd, check_cmd, ih, im, oh, om)
+
+    if not _systemd_user_available():
+        cur = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+        lines = (cur.stdout or "").splitlines() if cur.returncode == 0 else []
+        keep = [l for l in lines if not _is_keka_cron_line(l)]
+        uid = os.getuid()
+        gui_env = {"DISPLAY": os.environ.get("DISPLAY"),
+                   "WAYLAND_DISPLAY": os.environ.get("WAYLAND_DISPLAY"),
+                   "XDG_RUNTIME_DIR": os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{uid}",
+                   "DBUS_SESSION_BUS_ADDRESS": os.environ.get("DBUS_SESSION_BUS_ADDRESS")
+                   or f"unix:path=/run/user/{uid}/bus"}
+        gui = "".join(f"{k}={shlex.quote(v)} " for k, v in gui_env.items() if v)
+        cal = {"keka-punch-in": f"{im} {ih} * * 1-5", "keka-punch-out": f"{om} {oh} * * 1-5",
+               "keka-check": "0 */6 * * *"}
+        for name, _desc, cmd, _oncal in jobs:
+            env = gui if name == "keka-check" else ""   # the watchdog may open a window
+            keep.append(f"{cal[name]} {env}{shlex.join(cmd)} >> {shlex.quote(log_file)} 2>&1")
+        r = subprocess.run(["crontab", "-"], input="".join(l + "\n" for l in keep),
+                           capture_output=True, text=True)
+        return {"ok": r.returncode == 0, "method": "cron", "linger": None}
+
+    unit_dir = _systemd_user_dir()
+    os.makedirs(unit_dir, exist_ok=True)
+    out_path = log_file.replace("%", "%%")
+    header = "# Written by Auto-Keka — re-apply the schedule from the app instead of editing.\n"
+    for name, desc, cmd, oncal in jobs:
+        with open(os.path.join(unit_dir, f"{name}.service"), "w", encoding="utf-8") as f:
+            f.write(header + f"[Unit]\nDescription={desc}\n\n[Service]\nType=oneshot\n"
+                    f"ExecStart={' '.join(_systemd_exec_arg(a) for a in cmd)}\n"
+                    f"StandardOutput=append:{out_path}\nStandardError=append:{out_path}\n")
+        with open(os.path.join(unit_dir, f"{name}.timer"), "w", encoding="utf-8") as f:
+            f.write(header + f"[Unit]\nDescription={desc} schedule\n\n[Timer]\n"
+                    f"OnCalendar={oncal}\nPersistent=true\nAccuracySec=1s\n\n"
+                    "[Install]\nWantedBy=timers.target\n")
+
+    def sctl(*args):
+        return subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True).returncode == 0
+
+    timers = [f"{name}.timer" for name, *_ in jobs]
+    ok = sctl("daemon-reload") and sctl("enable", *timers) and sctl("restart", *timers)
+    # Cron would double-punch alongside the timers (harmless, but noisy) — drop it.
+    ok = _strip_keka_cron_lines() and ok
+
+    # Without lingering the user manager (and its timers) stops at logout;
+    # cron ran regardless, so keep that. Persistent= still catches up at login.
+    linger = None
+    try:
+        user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
+        q = subprocess.run(["loginctl", "show-user", user, "-p", "Linger", "--value"],
+                           capture_output=True, text=True, timeout=15)
+        linger = q.stdout.strip() == "yes" or subprocess.run(
+            ["loginctl", "enable-linger", user], capture_output=True, timeout=30).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        linger = False
+    return {"ok": ok, "method": "systemd", "linger": linger}
+
+
+def linux_schedule_method():
+    """'systemd' / 'cron' if the punch schedule is installed, else None."""
+    try:
+        r = subprocess.run(["systemctl", "--user", "is-enabled", "keka-punch-in.timer"],
+                           capture_output=True, text=True, timeout=15)
+        if r.stdout.strip() == "enabled":
+            return "systemd"
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        r = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=15)
+        if any(("keka_punch_in.py" in l or "--punch in" in l) for l in (r.stdout or "").splitlines()):
+            return "cron"
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
+
+
 def install_schedule_native(in_time="09:00", out_time="18:00"):
     """FROZEN-mode scheduler: register Mon-Fri punch jobs that invoke THIS
     binary with --punch (the shell installers assume a source checkout + venv,
@@ -403,7 +546,7 @@ def install_schedule_native(in_time="09:00", out_time="18:00"):
                         '<plist version="1.0"><dict>\n'
                         f'  <key>Label</key><string>{label}</string>\n'
                         '  <key>ProgramArguments</key><array>'
-                        f'<string>{exe}</string><string>--punch</string><string>{action}</string></array>\n'
+                        f'<string>{exe}</string><string>--punch</string><string>{action}</string><string>--scheduled</string></array>\n'
                         f'  <key>StartCalendarInterval</key><array>{cal}</array>\n'
                         f'  <key>StandardOutPath</key><string>{log_path(f"keka_punch_{action}.log")}</string>\n'
                         f'  <key>StandardErrorPath</key><string>{log_path(f"keka_punch_{action}.log")}</string>\n'
@@ -414,15 +557,9 @@ def install_schedule_native(in_time="09:00", out_time="18:00"):
                                capture_output=True)
             return True
         if sys.platform.startswith("linux"):
-            cur = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
-            keep = [l for l in (cur.stdout or "").splitlines()
-                    if "--punch" not in l and "keka_punch" not in l]
-            log = log_path("cron.log")
-            keep.append(f"{im} {ih} * * 1-5 {exe} --punch in >> {log} 2>&1")
-            keep.append(f"{om} {oh} * * 1-5 {exe} --punch out >> {log} 2>&1")
-            r = subprocess.run(["crontab", "-"], input="\n".join(keep) + "\n",
-                               capture_output=True, text=True)
-            return r.returncode == 0
+            return install_schedule_linux([exe, "--punch", "in", "--scheduled"],
+                                          [exe, "--punch", "out", "--scheduled"],
+                                          in_time=in_time, out_time=out_time)["ok"]
         if sys.platform.startswith("win"):
             ok = True
             for name, action, t in (("PunchIn", "in", f"{ih:02d}:{im:02d}"),
@@ -430,7 +567,7 @@ def install_schedule_native(in_time="09:00", out_time="18:00"):
                 r = subprocess.run(
                     ["schtasks", "/Create", "/F", "/TN", rf"Keka\{name}",
                      "/SC", "WEEKLY", "/D", "MON,TUE,WED,THU,FRI",
-                     "/TR", f'"{exe}" --punch {action}', "/ST", t],
+                     "/TR", f'"{exe}" --punch {action} --scheduled', "/ST", t],
                     capture_output=True)
                 ok = ok and r.returncode == 0
             return ok
@@ -1314,11 +1451,78 @@ def punch_failed(action, log, msg):
     notify(f"Auto clock-{label} failed: {msg}")
 
 
+# ── Scheduled runs: a caught-up punch must still make sense ───────────────────
+def _now():
+    return datetime.now()
+
+
+def scheduled_punch_window(action, now=None, in_time=None, out_time=None):
+    """May a SCHEDULED punch go ahead right now? → (ok, reason_if_not).
+
+    Schedulers run missed jobs once the machine wakes (systemd timers, launchd),
+    so a scheduled punch can fire hours late. Clocking in after the workday, or
+    clocking out yesterday's session this morning, is worse than skipping — so a
+    scheduled run only proceeds inside its own same-day window, Mon–Fri:
+        in  → from KEKA_IN_TIME until KEKA_OUT_TIME
+        out → from KEKA_OUT_TIME until midnight
+    Manual punches (the app's buttons) never come through here. Fail-open: an
+    unparseable or overnight schedule is not second-guessed."""
+    now = now or _now()
+    try:
+        ih, im = _parse_hhmm(in_time or IN_TIME, 9, 0)
+        oh, om = _parse_hhmm(out_time or OUT_TIME, 18, 0)
+        start = now.replace(hour=ih, minute=im, second=0, microsecond=0)
+        end = now.replace(hour=oh, minute=om, second=0, microsecond=0)
+    except ValueError:
+        return True, None
+    if end <= start:
+        return True, None
+    if now.weekday() >= 5:
+        return False, "it's the weekend"
+    if action == "in":
+        if now < start:
+            return False, f"it's before {start:%H:%M}, so it was an earlier day's clock-in"
+        if now >= end:
+            return False, f"the workday already ended at {end:%H:%M}"
+        return True, None
+    if now < end:
+        return False, (f"it's before {end:%H:%M}, so it was an earlier day's "
+                       "clock-out — check that day in Keka")
+    return True, None
+
+
+def _scheduled_due(action):
+    """Today's due time for a scheduled punch (for 'caught up late' notes)."""
+    h, m = _parse_hhmm(IN_TIME if action == "in" else OUT_TIME,
+                       9 if action == "in" else 18, 0)
+    try:
+        return _now().replace(hour=h, minute=m, second=0, microsecond=0)
+    except ValueError:
+        return None
+
+
+def wait_for_network(host, timeout=120, interval=5):
+    """True once `host:443` accepts a TCP connection. A punch caught up on wake
+    fires before Wi-Fi has reconnected; without this it fails instantly."""
+    import socket
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            socket.create_connection((host, 443), timeout=interval).close()
+            return True
+        except OSError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(interval)
+
+
 # ── Main entry for the cron scripts ───────────────────────────────────────────
-def run_punch(action, log_file):
+def run_punch(action, log_file, scheduled=False):
     """
     Load the saved session and click punch-in/out. No login, no 2FA.
     Exits 1 (with a clear message) if session.json is missing or expired.
+    scheduled=True (the OS scheduler passes --scheduled) adds the catch-up
+    window and a wait for the network; the app's manual buttons leave it off.
     """
     log = get_logger(log_file)
     label = "In" if action == "in" else "Out"
@@ -1339,6 +1543,22 @@ def run_punch(action, log_file):
         log.info("Time off today (%s) — skipping punch-%s", why, label)
         log_history("info", f"Auto clock-{action} skipped — {why} day")
         return
+
+    if scheduled:
+        ok, why = scheduled_punch_window(action)
+        if not ok:
+            log.info("Scheduled punch-%s not caught up — %s", label, why)
+            log_history("info", f"Missed auto clock-{action} not caught up — {why}")
+            if action == "out" and "earlier day" in why:
+                notify(f"Auto-Keka missed a clock-out while this computer was asleep — {why}")
+            return
+        due = _scheduled_due(action)
+        if due and _now() - due > timedelta(minutes=2):
+            log.info("Catching up punch-%s that was due %s", label, f"{due:%H:%M}")
+            log_history("info", f"Catching up missed auto clock-{action} (was due {due:%H:%M})")
+        if not wait_for_network(TENANT_HOST):
+            punch_failed(action, log, f"no network connection to {TENANT_HOST} after 2 minutes")
+            sys.exit(1)
 
     if not EMAIL or not PASSWORD:
         punch_failed(action, log,

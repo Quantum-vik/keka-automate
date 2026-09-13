@@ -69,6 +69,41 @@ GITHUB_REPO = "Quantum-vik/keka-automate"
 FROZEN = "__compiled__" in globals()
 
 
+def _resolve_app_executable(frozen, compiled, argv0, executable):
+    """The file to launch this app again with (schedules, autostart, the punch
+    buttons).
+
+    Compiled builds must NOT use sys.executable: Nuitka sets it to
+    '<binary dir>/python', a file that doesn't exist — and in a onefile build
+    that dir is the temp extraction folder, deleted when the app exits. Every
+    schedule written with it silently never ran. The real launcher is what the
+    user started: Nuitka's __compiled__.original_argv0 for onefile, else argv[0].
+    Candidates inside the extraction dir are rejected; source runs keep the
+    interpreter."""
+    if not frozen:
+        return executable
+    extract_dir = os.path.dirname(os.path.abspath(executable)) if getattr(compiled, "onefile", False) else None
+    candidates = []
+    for raw in (getattr(compiled, "original_argv0", None), argv0):
+        if not raw:
+            continue
+        if os.sep in raw or (os.altsep and os.altsep in raw):
+            candidates.append(os.path.abspath(raw))
+        else:
+            candidates.append(shutil.which(raw))
+        containing = getattr(compiled, "containing_dir", None)
+        if containing:
+            candidates.append(os.path.join(containing, os.path.basename(raw)))
+    for c in candidates:
+        if c and os.path.isfile(c) and not (extract_dir and os.path.dirname(c) == extract_dir):
+            return c
+    return executable
+
+
+APP_EXECUTABLE = _resolve_app_executable(
+    FROZEN, globals().get("__compiled__"), sys.argv[0] if sys.argv else "", sys.executable)
+
+
 def _app_data_dir():
     """A STABLE per-user folder for our data (.env, session, license, logs).
 
@@ -287,15 +322,15 @@ def install_autostart():
     try:
         if sys.platform == "darwin":
             app = macos_app_bundle()
-            if FROZEN and ".app/" in sys.executable:
-                app = sys.executable.split(".app/", 1)[0] + ".app"
+            if FROZEN and ".app/" in APP_EXECUTABLE:
+                app = APP_EXECUTABLE.split(".app/", 1)[0] + ".app"
             if app:
                 # Launch through LaunchServices so the Dock shows the app
                 # bundle's name and icon, not the python interpreter's.
                 prog = ('<string>/usr/bin/open</string>'
                         f'<string>-a</string><string>{app}</string>')
             elif FROZEN:
-                prog = f'<string>{sys.executable}</string>'
+                prog = f'<string>{APP_EXECUTABLE}</string>'
             else:
                 prog = f'<string>{_venv_python()}</string><string>{ui}</string>'
             la = os.path.expanduser("~/Library/LaunchAgents")
@@ -317,7 +352,7 @@ def install_autostart():
             subprocess.run(["launchctl", "load", plist], capture_output=True)
             return True
         if sys.platform.startswith("linux"):
-            cmd = sys.executable if FROZEN else f"{_venv_python()} {ui}"
+            cmd = f'"{APP_EXECUTABLE}"' if FROZEN else f"{_venv_python()} {ui}"
             ad = os.path.expanduser("~/.config/autostart")
             os.makedirs(ad, exist_ok=True)
             with open(os.path.join(ad, "auto-keka.desktop"), "w", encoding="utf-8") as f:
@@ -328,7 +363,7 @@ def install_autostart():
             return True
         if sys.platform.startswith("win"):
             import winreg
-            val = (f'"{sys.executable}"' if FROZEN
+            val = (f'"{APP_EXECUTABLE}"' if FROZEN
                    else f'"{_venv_python(windowless=True)}" "{ui}"')
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                                  r"Software\Microsoft\Windows\CurrentVersion\Run",
@@ -523,7 +558,7 @@ def install_schedule_native(in_time="09:00", out_time="18:00"):
     """FROZEN-mode scheduler: register Mon-Fri punch jobs that invoke THIS
     binary with --punch (the shell installers assume a source checkout + venv,
     which a compiled distribution doesn't have). Best-effort → bool."""
-    exe = sys.executable
+    exe = APP_EXECUTABLE
     ih, im = _parse_hhmm(in_time, 9, 0)
     oh, om = _parse_hhmm(out_time, 18, 0)
     try:

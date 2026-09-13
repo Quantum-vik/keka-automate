@@ -197,6 +197,11 @@ jobs:
           $out = & .\Auto-Keka.exe --version
           Write-Host "smoke: $out"
           if ($out -notmatch '^Auto-Keka ') { throw "smoke FAIL: unexpected --version output: $out" }
+          # Scheduled tasks relaunch --app-path; it must be this exe, not a temp path.
+          $app = (& .\Auto-Keka.exe --app-path | Out-String).Trim()
+          Write-Host "smoke: --app-path -> $app"
+          if (-not (Test-Path -LiteralPath $app -PathType Leaf)) { throw "smoke FAIL: --app-path is not a file: $app" }
+          if ((Resolve-Path -LiteralPath $app).Path -ne (Resolve-Path .\Auto-Keka.exe).Path) { throw "smoke FAIL: --app-path is not Auto-Keka.exe: $app" }
           Write-Host "smoke: OK"
 
       - uses: actions/upload-artifact@v4

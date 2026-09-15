@@ -61,6 +61,31 @@ die() { printf "  \033[1;31m✗ %s\033[0m\n" "$*" >&2; exit 1; }
 
 OS="$(uname -s)"   # Linux or Darwin
 
+# ── sudo that never hangs ──────────────────────────────────────────────────────
+# When the app runs this script from the GUI there is NO terminal to type a
+# password into, so a plain `sudo` blocks forever on an invisible prompt (read
+# from /dev/tty, not stdin) — the classic "stuck on Setting up…" hang. Detect
+# that case (KEKA_NONINTERACTIVE set by the app, or no tty on stdin) and use
+# non-interactive sudo, printing a copy-paste command the user can run instead
+# of hanging.
+NONINTERACTIVE=0
+if [ -n "${KEKA_NONINTERACTIVE:-}" ] || [ ! -t 0 ]; then
+    NONINTERACTIVE=1
+fi
+SUDO_MISSING_STEPS=""
+sudo_run() {
+    if [ "$NONINTERACTIVE" = "1" ]; then
+        if ! sudo -n "$@" >/dev/null 2>&1; then
+            warn "Needs admin rights (no terminal for a password prompt here)."
+            warn "Finish this step by running in a terminal:  sudo $*"
+            SUDO_MISSING_STEPS="$SUDO_MISSING_STEPS\n    sudo $*"
+            return 1
+        fi
+    else
+        sudo "$@"
+    fi
+}
+
 # Per-user data folder (must match keka_common.py DATA_DIR) — .env, session, and
 # license live here, NOT next to the code, so the compiled binary can persist them.
 if [ "$OS" = "Darwin" ]; then
@@ -159,11 +184,18 @@ if [ "$OS" = "Linux" ]; then
         "$VENV_PY" -m playwright install chromium
         warn "Arch detected. If the browser fails to launch, install libs manually:"
         warn "  sudo pacman -S --needed nss nspr atk at-spi2-core libcups libxcomposite libxdamage libxrandr libxkbcommon gtk3 alsa-lib"
-    elif command -v sudo >/dev/null 2>&1; then
+    elif command -v sudo >/dev/null 2>&1 && [ "$NONINTERACTIVE" != "1" ]; then
         "$VENV_PY" -m playwright install --with-deps chromium || {
             warn "Couldn't auto-install system libs. Run:  sudo $VENV_PY -m playwright install-deps chromium"
             "$VENV_PY" -m playwright install chromium
         }
+    elif [ "$NONINTERACTIVE" = "1" ]; then
+        # No terminal for a password — download the browser only ('--with-deps'
+        # shells out to its own interactive sudo and would hang). System libs, if
+        # missing, are reported at the end for the user to install manually.
+        "$VENV_PY" -m playwright install chromium
+        warn "If the browser fails to launch, install libs:  sudo $VENV_PY -m playwright install-deps chromium"
+        SUDO_MISSING_STEPS="$SUDO_MISSING_STEPS\n    sudo $VENV_PY -m playwright install-deps chromium"
     else
         "$VENV_PY" -m playwright install chromium
         warn "No sudo — if the browser fails to launch, install system libs:  $VENV_PY -m playwright install-deps chromium"
@@ -186,21 +218,21 @@ if [ "$OS" = "Darwin" ]; then
     fi
     ok "macOS uses osascript for alerts — nothing else needed"
 elif command -v apt-get >/dev/null 2>&1; then
-    sudo apt-get update -qq
-    sudo apt-get install -y tesseract-ocr tesseract-ocr-eng python3-tk zenity libnotify-bin
-    ok "installed via apt"
+    sudo_run apt-get update -qq || true
+    sudo_run apt-get install -y tesseract-ocr tesseract-ocr-eng python3-tk zenity libnotify-bin \
+        && ok "installed via apt" || warn "OCR/alert packages need a manual install (see above)"
 elif command -v dnf >/dev/null 2>&1; then
-    sudo dnf install -y tesseract python3-tkinter zenity libnotify
-    ok "installed via dnf"
+    sudo_run dnf install -y tesseract python3-tkinter zenity libnotify \
+        && ok "installed via dnf" || warn "OCR/alert packages need a manual install (see above)"
 elif command -v yum >/dev/null 2>&1; then
-    sudo yum install -y tesseract python3-tkinter zenity libnotify
-    ok "installed via yum"
+    sudo_run yum install -y tesseract python3-tkinter zenity libnotify \
+        && ok "installed via yum" || warn "OCR/alert packages need a manual install (see above)"
 elif command -v pacman >/dev/null 2>&1; then
-    sudo pacman -S --needed --noconfirm tesseract tesseract-data-eng tk zenity libnotify
-    ok "installed via pacman"
+    sudo_run pacman -S --needed --noconfirm tesseract tesseract-data-eng tk zenity libnotify \
+        && ok "installed via pacman" || warn "OCR/alert packages need a manual install (see above)"
 elif command -v zypper >/dev/null 2>&1; then
-    sudo zypper install -y tesseract-ocr python3-tk zenity libnotify-tools
-    ok "installed via zypper"
+    sudo_run zypper install -y tesseract-ocr python3-tk zenity libnotify-tools \
+        && ok "installed via zypper" || warn "OCR/alert packages need a manual install (see above)"
 else
     command -v tesseract >/dev/null 2>&1 \
         || die "No known package manager. Install tesseract (+English data), python3-tk, zenity, libnotify manually."
@@ -211,21 +243,26 @@ fi
 # don't install, the UI automatically falls back to opening in your browser.
 if [ "$OS" = "Linux" ]; then
     if command -v apt-get >/dev/null 2>&1; then
-        sudo apt-get install -y python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.1 2>/dev/null \
-            || sudo apt-get install -y python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.0 2>/dev/null \
+        sudo_run apt-get install -y python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.1 \
+            || sudo_run apt-get install -y python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.0 \
             || warn "WebKitGTK not installed — the UI will open in your browser instead."
     elif command -v dnf >/dev/null 2>&1; then
-        sudo dnf install -y python3-gobject gtk3 webkit2gtk4.1 2>/dev/null \
-            || sudo dnf install -y python3-gobject gtk3 webkit2gtk3 2>/dev/null \
+        sudo_run dnf install -y python3-gobject gtk3 webkit2gtk4.1 \
+            || sudo_run dnf install -y python3-gobject gtk3 webkit2gtk3 \
             || warn "WebKitGTK not installed — the UI will open in your browser instead."
     elif command -v pacman >/dev/null 2>&1; then
-        sudo pacman -S --needed --noconfirm python-gobject gtk3 webkit2gtk 2>/dev/null \
+        sudo_run pacman -S --needed --noconfirm python-gobject gtk3 webkit2gtk \
             || warn "WebKitGTK not installed — the UI will open in your browser instead."
     else
         warn "For a native UI window install WebKitGTK + python-gobject; otherwise the UI opens in your browser."
     fi
     link_system_gi
     ok "native-window deps attempted (browser fallback always works)"
+fi
+if [ -n "$SUDO_MISSING_STEPS" ]; then
+    b "Finish setup: these steps need admin rights"
+    warn "No terminal was available for a password, so run these once yourself:"
+    printf "%b\n" "$SUDO_MISSING_STEPS"
 fi
 fi  # want heavy
 

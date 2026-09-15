@@ -31,6 +31,8 @@ import sys
 import json
 import time
 import queue
+import atexit
+import socket
 import logging
 import threading
 import subprocess
@@ -245,6 +247,7 @@ class Backend:
                 return {"ok": True, "ready": True}
             self._deps_installing = True
             self.push_log("Setting up — downloading browser + OCR engine…")
+            kc.log_step("install_deps: begin (frozen=%s)", kc.FROZEN)
             if kc.FROZEN:
                 # No source tree/venv in the compiled build — use the bundled
                 # Playwright driver for Chromium; tesseract needs the OS package.
@@ -261,10 +264,16 @@ class Backend:
                            os.path.join(kc.SCRIPT_DIR, "setup.ps1"), "-Phase", "heavy"]
                 else:
                     cmd = ["bash", os.path.join(kc.SCRIPT_DIR, "setup.sh"), "--phase", "heavy"]
-                rc = self._run_stream(cmd)
+                # There is no terminal behind the GUI for a sudo password prompt,
+                # so tell setup.sh to use non-interactive sudo — otherwise it hangs
+                # forever on an invisible prompt ("stuck on Setting up…").
+                env = dict(os.environ, KEKA_NONINTERACTIVE="1")
+                kc.log_step("install_deps: running %s", " ".join(cmd))
+                rc = self._run_stream(cmd, env=env)
             ready = kc.deps_ready()
             self._deps_installing = False
             self.push_state()
+            kc.log_step("install_deps: done (rc=%s, ready=%s)", rc, ready)
             if ready:
                 self.push_log("Setup complete — you're ready to sign in ✓", "in")
             else:
@@ -497,21 +506,32 @@ class Backend:
                          "today": day.date() == now.date(), "dim": day.date() > now.date()})
         return week
 
-    def _run_stream(self, cmd):
+    def _run_stream(self, cmd, env=None):
+        kc.log_step("_run_stream start: %s", " ".join(map(str, cmd)))
         try:
             p = subprocess.Popen(cmd, cwd=kc.SCRIPT_DIR, stdout=subprocess.PIPE,
-                                  stderr=subprocess.STDOUT, text=True, bufsize=1)
+                                  stderr=subprocess.STDOUT, text=True, bufsize=1,
+                                  # Detach from any controlling terminal so a stray
+                                  # interactive sudo can't block on /dev/tty; it must
+                                  # fail fast (or use -n) instead of hanging.
+                                  stdin=subprocess.DEVNULL, env=env)
         except Exception as e:
             self.push_log(f"Could not run: {e}")
+            kc.log_step("_run_stream failed to start: %s", e, level=logging.ERROR)
             return 1
         for line in p.stdout:
             line = line.strip()
+            if not line:
+                continue
+            kc.log_step("  [%s] %s", os.path.basename(str(cmd[0])), line, level=logging.DEBUG)
             if any(k in line for k in ("INFO", "WARNING", "ERROR")):
                 self.push_log(line.split("  ", 1)[-1] if "  " in line else line)
         p.wait()
+        kc.log_step("_run_stream done: rc=%s", p.returncode)
         return p.returncode
 
     def _do_punch(self, action):
+        kc.log_step("punch: clock-%s requested", action)
         with self._pw_lock:
             kc.reload_config()
             if kc.FROZEN:   # compiled build: re-invoke this binary in punch mode
@@ -524,6 +544,7 @@ class Backend:
                 self.push_log("Session expired — logging in first…")
                 if kc.interactive_login(self._otp_getter, self.log, headless=True):
                     rc = self._run_stream(cmd)
+            kc.log_step("punch: clock-%s finished rc=%s", action, rc)
             if rc == 0:
                 self._alive = True   # punch reached Keka — session verified live
             try:
@@ -627,6 +648,7 @@ class Api:
     """The methods the page calls as window.pywebview.api.*"""
     def __init__(self, backend):
         self._b = backend
+        self._maximized = False
     def get_state(self):        return self._b.get_state()
     def clock_in(self):         return self._b.clock_in()
     def clock_out(self):        return self._b.clock_out()
@@ -657,10 +679,97 @@ class Api:
         except Exception:
             try: webview.windows[0].hide()
             except Exception: pass
+    def win_maximize(self):
+        """Toggle maximize / restore (the frameless window's green light)."""
+        import webview
+        try:
+            w = webview.windows[0]
+            if self._maximized:
+                w.restore()
+                self._maximized = False
+            else:
+                w.maximize()
+                self._maximized = True
+        except Exception:
+            pass
+
+
+# ─── Single-instance guard ────────────────────────────────────────────────────
+# Launching Auto-Keka again should focus the window that's already open, not
+# stack another copy. We use a per-user AF_UNIX datagram socket as both the lock
+# (only one process can bind the path) and the IPC channel (a second launch pings
+# it so the running instance raises its window).
+_INSTANCE_SOCK_PATH = os.path.join(kc.DATA_DIR, "instance.sock")
+
+
+def _claim_single_instance():
+    """Become the primary instance, or hand off to the one already running.
+
+    Returns the bound socket if we're the first instance (start the focus
+    listener on it), None if another instance is running (caller should exit),
+    or "proceed" if the guard can't be set up (just run without it)."""
+    if not hasattr(socket, "AF_UNIX"):
+        return "proceed"                       # not a Unix platform — skip the guard
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    try:
+        s.bind(_INSTANCE_SOCK_PATH)
+        atexit.register(lambda: _safe_unlink(_INSTANCE_SOCK_PATH))
+        kc.log_step("single-instance: primary (bound %s)", _INSTANCE_SOCK_PATH)
+        return s
+    except OSError:
+        pass                                   # path taken — maybe a live instance
+    try:
+        c = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        c.settimeout(1.0)
+        c.sendto(b"focus", _INSTANCE_SOCK_PATH)
+        c.close()
+        kc.log_step("single-instance: another instance is running — asked it to focus")
+        return None                            # a live instance took the ping
+    except OSError:
+        _safe_unlink(_INSTANCE_SOCK_PATH)      # stale socket — take it over
+        try:
+            s.bind(_INSTANCE_SOCK_PATH)
+            atexit.register(lambda: _safe_unlink(_INSTANCE_SOCK_PATH))
+            kc.log_step("single-instance: replaced a stale lock, now primary")
+            return s
+        except OSError:
+            return "proceed"
+
+
+def _safe_unlink(path):
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def _start_focus_listener(sock, window):
+    """Raise/focus `window` whenever another launch pings the instance socket."""
+    def loop():
+        while True:
+            try:
+                sock.recvfrom(64)
+            except OSError:
+                return
+            try:
+                window.restore()               # un-minimize if needed
+                window.show()
+                # A brief on-top flip pulls it above other windows, then releases
+                # so it doesn't stay pinned.
+                if hasattr(window, "on_top"):
+                    window.on_top = True
+                    window.on_top = False
+                kc.log_step("single-instance: focused window on second-launch ping")
+            except Exception:
+                pass
+    threading.Thread(target=loop, daemon=True).start()
 
 
 def run_native():
     import webview  # raises if pywebview missing
+    guard = _claim_single_instance()
+    if guard is None:
+        return                                 # already running — focused it, exit
     _platform_app_identity()
     backend = Backend()
     remote_broadcast = start_remote_server(backend)   # phone remote on the LAN
@@ -678,6 +787,8 @@ def run_native():
         width=860, height=760, min_size=(560, 640), background_color=bg,
         frameless=True, easy_drag=False,   # design supplies its own title bar
     )
+    if hasattr(guard, "recvfrom"):         # we're primary → listen for focus pings
+        _start_focus_listener(guard, window)
     def emit(obj):
         _push_native(window, obj)
         if remote_broadcast:
@@ -1022,9 +1133,14 @@ def main():
 
     if not os.path.exists(UI_HTML):
         print(f"UI file not found: {UI_HTML}", file=sys.stderr); sys.exit(1)
+    kc.log_step("app start: Auto-Keka %s (data=%s, licensed=%s)",
+                kc.APP_VERSION, kc.DATA_DIR, lic.is_licensed())
     try:
         run_native()
+        kc.log_step("app exit: native window closed")
     except Exception as e:
+        kc.log_step("native window unavailable: %s — falling back to browser",
+                    e, level=logging.WARNING)
         print(f"(native window unavailable: {e})", flush=True)
         run_browser()
 

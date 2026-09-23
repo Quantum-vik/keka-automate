@@ -706,6 +706,11 @@
           <input id="licKey" placeholder="paste your key here" /></div>
         <div class="werr" id="licErr"></div>
         <button class="wbtn" id="licBtn">Activate</button>
+        <!-- A machine-locked key only unlocks the machine it was minted for, so
+             the buyer has to be able to read this id off and send it over. -->
+        <p class="lead mono" id="machineRow" style="display:none;margin-top:14px;font-size:12px;opacity:.7">
+          This machine's id: <span id="machineId"></span>
+          <a href="#" id="copyMachine" style="margin-left:8px">copy</a></p>
       </div>
     </div>
 
@@ -1174,6 +1179,7 @@ function applyGates() {
   const onboarded = STATE.onboarded !== false;
   // License comes first — nothing else shows until the app is activated.
   $("#gate").classList.toggle("show", !licensed);
+  if (!licensed) showMachineId();
   if (!licensed) { $("#setup").classList.remove("show"); $("#wizard").classList.remove("show"); return; }
   $("#setup").classList.toggle("show", !depsReady);
   if (depsReady && !onboarded) { $("#wizard").classList.add("show"); if (!_wizStep) wizGoto("account"); }
@@ -1191,6 +1197,20 @@ async function activateLicense() {
   else { $("#licErr").textContent = (r && r.message) || "Invalid or expired license key"; }
 }
 $("#licBtn").addEventListener("click", activateLicense);
+/* Shown on the gate so a buyer can send it over and get a key bound to it. */
+function showMachineId(){
+  const id = STATE && STATE.machineId;
+  if (!id) return;
+  $("#machineId").textContent = id;
+  $("#machineRow").style.display = "";
+}
+$("#copyMachine").addEventListener("click", e => {
+  e.preventDefault();
+  const id = $("#machineId").textContent;
+  if (navigator.clipboard) navigator.clipboard.writeText(id);
+  e.target.textContent = "copied";
+  setTimeout(() => { e.target.textContent = "copy"; }, 1500);
+});
 $("#licKey").addEventListener("keydown", e => { if (e.key === "Enter") activateLicense(); });
 function appendSetupLog(msg) {
   const el = $("#setupLog"); if (!el) return;

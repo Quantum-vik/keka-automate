@@ -50,3 +50,24 @@ if grep -q "native window unavailable" "$log"; then
 fi
 [ -n "$webkit" ] || { echo "native FAIL: WebKitGTK never loaded within ${WAIT}s"; cat "$log"; exit 1; }
 echo "native: OK (WebKitGTK loaded in pid $webkit: $(grep -o '/[^ ]*libwebkit2gtk[^ ]*' "/proc/$webkit/maps" | head -1))"
+
+# The onefile dir is on the loader path, so any system graphics lib we ship
+# SHADOWS the user's. That is invisible here — CI distros are old enough to be
+# compatible with the build host — and only breaks on newer ones (fontconfig
+# >= 2.17: "libpangoft2 ... undefined symbol: FcConfigSetDefaultSubstitute").
+# So assert the payload directly instead of trusting the runtime check above.
+payload="$(dirname "$(readlink -f "/proc/$webkit/exe")")"
+banned=0
+for lib in libfontconfig.so libfreetype.so libglib-2.0.so libgobject-2.0.so \
+           libgio-2.0.so libgmodule-2.0.so libgirepository-1.0.so; do
+  # Wheel-vendored copies carry a hash (libfreetype-9fc94c80.so.6...) and are
+  # private to their own module, so they cannot shadow anything. Only the
+  # plain SONAME does.
+  for hit in "$payload/$lib"*; do
+    [ -e "$hit" ] || continue
+    echo "native FAIL: payload ships $(basename "$hit") — it will shadow the user's"
+    banned=1
+  done
+done
+[ "$banned" -eq 0 ] || exit 1
+echo "native: payload ships no shadowing system libs"

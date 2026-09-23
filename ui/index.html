@@ -419,9 +419,9 @@
       <div class="lights">
         <i style="background:#ff5f57;cursor:pointer" title="Close"    onclick="winClose()"></i>
         <i style="background:#febc2e;cursor:pointer" title="Minimize" onclick="winMinimize()"></i>
-        <i style="background:#28c840"></i>
+        <i style="background:#28c840;cursor:pointer" title="Maximize" onclick="winMaximize()"></i>
       </div>
-      <div class="brand pywebview-drag-region">
+      <div class="brand pywebview-drag-region" ondblclick="winMaximize()">
         <div class="logo">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
             <circle cx="12" cy="12" r="8.5" stroke="#fff" stroke-width="1.8"/>
@@ -1126,6 +1126,7 @@ $("#otpInput").addEventListener("keydown", e => { if(e.key==="Enter") $("#otpSub
 /* ── window controls (native frameless window) ──────────────────────────── */
 function winClose(){ if (window.pywebview && window.pywebview.api.win_close) window.pywebview.api.win_close(); else window.close(); }
 function winMinimize(){ if (window.pywebview && window.pywebview.api.win_minimize) window.pywebview.api.win_minimize(); }
+function winMaximize(){ if (window.pywebview && window.pywebview.api.win_maximize) window.pywebview.api.win_maximize(); }
 
 /* ── helpers ────────────────────────────────────────────────────────────── */
 function $(s){ return document.querySelector(s); }

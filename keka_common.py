@@ -170,6 +170,44 @@ def tmp_path(name):
     return os.path.join(TMP_DIR, name)
 
 
+# ── App-wide step log ─────────────────────────────────────────────────────────
+# One always-on, rotating log of every meaningful step, written to
+# logs/auto-keka.log, so any run (GUI, schedule, punch) leaves a trail we can
+# read back when debugging. It uses its OWN named logger with propagate=False so
+# it survives get_logger()'s basicConfig(force=True) reconfigurations below.
+import logging.handlers   # noqa: E402  (kept next to the logger it configures)
+
+APP_LOG_FILE = log_path("auto-keka.log")
+_app_logger = logging.getLogger("auto-keka")
+_app_logger.setLevel(logging.DEBUG)
+_app_logger.propagate = False
+if not _app_logger.handlers:
+    try:
+        _fh = logging.handlers.RotatingFileHandler(
+            APP_LOG_FILE, maxBytes=1_000_000, backupCount=3, encoding="utf-8")
+        _fh.setFormatter(logging.Formatter(
+            "%(asctime)s  %(levelname)-7s  %(message)s"))
+        _app_logger.addHandler(_fh)
+    except OSError:
+        pass                       # read-only home / odd sandbox — logging is best-effort
+    if getattr(sys, "stdout", None) and sys.stdout.isatty():
+        _sh = logging.StreamHandler(sys.stdout)
+        _sh.setFormatter(logging.Formatter("%(asctime)s  %(levelname)-7s  %(message)s"))
+        _app_logger.addHandler(_sh)
+
+
+def log_step(msg, *args, level=logging.INFO, exc_info=False):
+    """Record one app step to logs/auto-keka.log (debugging aid for every flow).
+
+    Usage mirrors logging: log_step("did %s in %ss", name, secs). Never raises —
+    logging must not be able to break the app.
+    """
+    try:
+        _app_logger.log(level, msg, *args, exc_info=exc_info)
+    except Exception:
+        pass
+
+
 def _load_env():
     """Parse DATA_DIR/.env (KEY=VALUE lines) into a dict. Real env vars win."""
     values = {}
@@ -259,6 +297,7 @@ def chromium_installed():
     global _chromium_ok
     if _chromium_ok:
         return True
+    log_step("chromium_installed: probing Playwright driver…", level=logging.DEBUG)
     try:
         with sync_playwright() as p:
             _chromium_ok = os.path.exists(p.chromium.executable_path)
@@ -274,12 +313,18 @@ def chromium_installed():
         d = _playwright_browsers_dir()   # driver unavailable — fall back to a dir probe
         _chromium_ok = os.path.isdir(d) and any(
             n.startswith(("chromium-", "chromium_headless_shell-")) for n in os.listdir(d))
+    log_step("chromium_installed: %s", _chromium_ok, level=logging.DEBUG)
     return _chromium_ok
 
 
 def deps_ready():
     """True when the heavy deps (Chromium + tesseract OCR) are both present."""
-    return bool(_find_tesseract()) and chromium_installed()
+    tess = bool(_find_tesseract())
+    ready = tess and chromium_installed()
+    if not ready:
+        log_step("deps_ready: not ready (tesseract=%s, chromium=%s)",
+                 tess, _chromium_ok, level=logging.DEBUG)
+    return ready
 
 
 def install_chromium_frozen():
@@ -920,6 +965,7 @@ def interactive_login(otp_getter, log, headless=True):
     otp_getter(retry=False) -> str|None   (None cancels)
     Returns True on success, False otherwise. Runs headless (no browser popup).
     """
+    log_step("interactive_login: begin (headless=%s)", headless)
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
         # Locked from BEFORE the state load: relogin decisions made on a stale
@@ -1581,6 +1627,7 @@ def run_punch(action, log_file, scheduled=False):
     log = get_logger(log_file)
     label = "In" if action == "in" else "Out"
     log.info("=== Keka Punch-%s started ===", label)
+    log_step("run_punch: clock-%s started (scheduled=%s)", action, scheduled)
 
     # Kill-switch and time-off gates run BEFORE anything else and are fail-open
     # (is_paused/is_timeoff swallow errors → punch proceeds), so a bad flag or a

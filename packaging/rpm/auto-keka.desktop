@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Auto-Keka
+Comment=Keka auto attendance — clock in/out
+Exec=/usr/bin/auto-keka
+Icon=auto-keka
+Terminal=false
+Categories=Utility;Office;
+StartupWMClass=Auto-Keka

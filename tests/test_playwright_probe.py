@@ -33,3 +33,29 @@ def test_chromium_probe_is_quiet(tmp_path):
     noise = r.stdout + r.stderr
     assert "Task was destroyed but it is pending" not in noise
     assert "Future exception was never retrieved" not in noise
+
+
+def test_browsers_path_is_pinned_before_playwright_import(tmp_path):
+    """The browser cache must be pinned to the per-user dir at import time.
+
+    The compiled build's playwright plugin otherwise repoints it at the onefile
+    payload — no browsers there, and a fresh directory name every launch — so
+    the app re-downloads Chromium on every start and never finds it again.
+    """
+    env = {k: v for k, v in os.environ.items() if k != "PLAYWRIGHT_BROWSERS_PATH"}
+    code = ("import os, keka_common as kc; "
+            "print(os.environ['PLAYWRIGHT_BROWSERS_PATH'] == kc._default_browsers_dir())")
+    r = subprocess.run([sys.executable, "-c", code], cwd=REPO, env=env,
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip().endswith("True"), r.stdout + r.stderr
+
+
+def test_explicit_browsers_path_still_wins(tmp_path):
+    """A user-set PLAYWRIGHT_BROWSERS_PATH must not be overridden by the pin."""
+    env = dict(os.environ, PLAYWRIGHT_BROWSERS_PATH=str(tmp_path))
+    code = ("import keka_common as kc; print(kc._playwright_browsers_dir())")
+    r = subprocess.run([sys.executable, "-c", code], cwd=REPO, env=env,
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip().endswith(str(tmp_path)), r.stdout + r.stderr

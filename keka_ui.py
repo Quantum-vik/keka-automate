@@ -412,6 +412,7 @@ class Backend:
             # Compiled build: schedule natively — jobs call this binary --punch.
             ok = kc.install_schedule_native(it, ot)
             kc.log_history("info", f"Schedule set · in {it}, out {ot}")
+            self._warn_if_no_linger()
             self.push_state()
             return {"ok": bool(ok)}
         sd = os.path.join(kc.SCRIPT_DIR, "scheduling")
@@ -427,8 +428,21 @@ class Backend:
             return {"ok": False, "message": "Unsupported OS"}
         rc = self._run_stream(cmd)
         kc.log_history("info", f"Schedule set · in {it}, out {ot}")
+        self._warn_if_no_linger()
         self.push_state()
         return {"ok": rc == 0}
+
+    def _warn_if_no_linger(self):
+        """Tell the user when the schedule will stop at logout, and how to fix it.
+
+        Enabling lingering needs authorisation the app may not be able to get,
+        and the failure was silent — so the schedule looked set while the timers
+        could never fire once the session ended.
+        """
+        hint = kc.linger_warning()
+        if hint:
+            self.push_log(hint)
+            kc.log_step("schedule: lingering unavailable — warned the user")
 
     # ── time off (holidays / planned leave) ──────────────────────────────────
     def get_timeoff(self):

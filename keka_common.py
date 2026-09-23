@@ -637,6 +637,33 @@ def linux_schedule_method():
     return None
 
 
+
+def linger_warning():
+    """A copy-pasteable hint when systemd timers would die at logout, else None.
+
+    install_schedule_linux() already tries `loginctl enable-linger`, but that can
+    fail with nothing able to prompt for authorisation (polkit, no terminal) —
+    and it failed silently, so the user believed the schedule was set while the
+    timers would never fire once they logged out. cron needs no hint: it runs
+    regardless of login state.
+    """
+    if not sys.platform.startswith("linux"):
+        return None
+    if linux_schedule_method() != "systemd":
+        return None
+    user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
+    if not user:
+        return None
+    try:
+        q = subprocess.run(["loginctl", "show-user", user, "-p", "Linger", "--value"],
+                           capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return None                      # no loginctl — not a systemd box after all
+    if q.stdout.strip() == "yes":
+        return None
+    return ("Timers only run while you're logged in. To punch even when logged "
+            "out, run this once:\n    loginctl enable-linger " + user)
+
 def install_schedule_native(in_time="09:00", out_time="18:00"):
     """FROZEN-mode scheduler: register Mon-Fri punch jobs that invoke THIS
     binary with --punch (the shell installers assume a source checkout + venv,

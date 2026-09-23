@@ -30,7 +30,32 @@ from io import BytesIO
 
 from PIL import Image
 import pytesseract
-from playwright.sync_api import sync_playwright
+
+
+# ── Where Playwright keeps its browsers ───────────────────────────────────────
+# MUST be settled before playwright is imported. In the compiled build Nuitka's
+# playwright plugin repoints the browser cache at the bundled onefile directory,
+# which ships no browsers AND is re-created under a new name on every launch. So
+# the app never sees the Chromium it already downloaded, and a download it does
+# make is thrown away with the temp dir — the "Setting up — downloading browser"
+# panel then reappears on every start, forever.
+#
+# Pin it to the per-user cache instead, the same place the source install uses,
+# so a download happens once and is found again next launch. An explicit
+# PLAYWRIGHT_BROWSERS_PATH from the environment still wins.
+def _default_browsers_dir():
+    home = os.path.expanduser("~")
+    if sys.platform == "darwin":
+        return os.path.join(home, "Library", "Caches", "ms-playwright")
+    if sys.platform.startswith("win"):
+        base = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
+        return os.path.join(base, "ms-playwright")
+    return os.path.join(home, ".cache", "ms-playwright")
+
+
+os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", _default_browsers_dir())
+
+from playwright.sync_api import sync_playwright   # noqa: E402  (must follow the pin above)
 
 # ── tesseract discovery (cross-platform) ──────────────────────────────────────
 # Prefer whatever is on PATH; otherwise probe the standard per-OS install dirs.
@@ -60,7 +85,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Single source of truth for the app version. release.yml reads THIS for the
 # Nuitka product-version, and the in-app update check compares it against the
 # latest GitHub release tag — so bumping this one line is what a release needs.
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 GITHUB_REPO = "Quantum-vik/keka-automate"
 
 # True when running as a Nuitka-compiled binary (no source tree, no venv).
@@ -277,13 +302,7 @@ def _playwright_browsers_dir():
     override = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
     if override and override != "0":
         return override
-    home = os.path.expanduser("~")
-    if sys.platform == "darwin":
-        return os.path.join(home, "Library", "Caches", "ms-playwright")
-    if sys.platform.startswith("win"):
-        base = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
-        return os.path.join(base, "ms-playwright")
-    return os.path.join(home, ".cache", "ms-playwright")
+    return _default_browsers_dir()
 
 
 _chromium_ok = None   # cache: once the right build is seen it can't un-install mid-run

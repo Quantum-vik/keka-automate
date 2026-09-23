@@ -14,17 +14,25 @@ The 2FA OTP is entered in the window; login runs headless (no browser popup).
 Everything you do is recorded in logs/history.jsonl (previous-session info).
 """
 
-# Compiled Linux build: PyGObject (gi) is bundled, but GLib/GObject/girepository
-# and the typelibs must come from the user's system, matching the GTK/WebKitGTK
-# pywebview loads there. The build host (Ubuntu 22.04, GLib 2.72) is older than
-# most users' distros, whose GTK needs newer GLib symbols than it has.
+# Compiled Linux build: the native window is drawn by the USER's GTK/WebKitGTK,
+# loaded from their system at runtime. Anything we vendor under the same plain
+# SONAME lands in the onefile dir — which is on the loader path — and therefore
+# SHADOWS their copy. Their GTK then resolves against our older library and
+# fails on a symbol it expects, e.g. on fontconfig >= 2.17 (Arch, Fedora 41+,
+# Ubuntu 25.04):
 #
-# Same trap, one library family out: tkinter drags libtk/libXft in, and THEY
-# pull the build host's libfontconfig/libfreetype into the onefile dir. That
-# dir is on the loader path, so the stale copies shadow the system's — and the
-# system's own libpangoft2 then fails to resolve against them
-# ("undefined symbol: FcConfigSetDefaultSubstitute" on fontconfig >= 2.17),
-# GTK never loads, and the app silently falls back to the browser.
+#   libpangoft2-1.0.so.0: undefined symbol: FcConfigSetDefaultSubstitute
+#
+# GTK never loads and the app silently falls back to the browser. The build
+# host (Ubuntu 22.04) is older than most users' distros, so this is one-way:
+# it always breaks the newer machine, never CI.
+#
+# So the whole graphics/font/X11 stack comes from the system, not from us.
+# Wheel-vendored copies are exempt — their names carry a hash
+# (libfreetype-9fc94c80.so.6...), so they are private and cannot shadow.
+# OpenSSL is deliberately NOT here: Python's _ssl is built against the bundled
+# major and older distros still ship 1.1, so that one must stay vendored.
+# packaging/native_window_check.sh enforces this list on the built artifact.
 # nuitka-project-if: {OS} == "Linux":
 #    nuitka-project: --noinclude-dlls=libglib-2.0.so*
 #    nuitka-project: --noinclude-dlls=libgobject-2.0.so*
@@ -33,6 +41,22 @@ Everything you do is recorded in logs/history.jsonl (previous-session info).
 #    nuitka-project: --noinclude-dlls=libgirepository-1.0.so*
 #    nuitka-project: --noinclude-dlls=libfontconfig.so*
 #    nuitka-project: --noinclude-dlls=libfreetype.so*
+#    nuitka-project: --noinclude-dlls=libpng16.so*
+#    nuitka-project: --noinclude-dlls=libexpat.so*
+#    nuitka-project: --noinclude-dlls=libbrotlicommon.so*
+#    nuitka-project: --noinclude-dlls=libbrotlidec.so*
+#    nuitka-project: --noinclude-dlls=libbsd.so*
+#    nuitka-project: --noinclude-dlls=libmd.so*
+#    nuitka-project: --noinclude-dlls=libffi.so*
+#    nuitka-project: --noinclude-dlls=libuuid.so*
+#    nuitka-project: --noinclude-dlls=libX11.so*
+#    nuitka-project: --noinclude-dlls=libXau.so*
+#    nuitka-project: --noinclude-dlls=libXdmcp.so*
+#    nuitka-project: --noinclude-dlls=libXext.so*
+#    nuitka-project: --noinclude-dlls=libXft.so*
+#    nuitka-project: --noinclude-dlls=libXrender.so*
+#    nuitka-project: --noinclude-dlls=libXss.so*
+#    nuitka-project: --noinclude-dlls=libxcb.so*
 #    nuitka-project: --noinclude-data-files=girepository
 
 import os

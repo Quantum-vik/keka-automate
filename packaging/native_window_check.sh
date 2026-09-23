@@ -51,18 +51,25 @@ fi
 [ -n "$webkit" ] || { echo "native FAIL: WebKitGTK never loaded within ${WAIT}s"; cat "$log"; exit 1; }
 echo "native: OK (WebKitGTK loaded in pid $webkit: $(grep -o '/[^ ]*libwebkit2gtk[^ ]*' "/proc/$webkit/maps" | head -1))"
 
-# The onefile dir is on the loader path, so any system graphics lib we ship
-# SHADOWS the user's. That is invisible here — CI distros are old enough to be
-# compatible with the build host — and only breaks on newer ones (fontconfig
-# >= 2.17: "libpangoft2 ... undefined symbol: FcConfigSetDefaultSubstitute").
-# So assert the payload directly instead of trusting the runtime check above.
+# The onefile dir is on the loader path, so any system library we ship SHADOWS
+# the user's. That is invisible here — CI distros are older than or equal to the
+# build host, so their GTK is always compatible with what we vendored — and it
+# only breaks on newer ones (fontconfig >= 2.17: "libpangoft2 ... undefined
+# symbol: FcConfigSetDefaultSubstitute"). Testing more distros just moves the
+# goalposts, so assert the payload directly: the graphics/font/X11 stack must
+# come from the user's system. Keep in sync with the nuitka-project block in
+# keka_ui.py. OpenSSL is deliberately absent: Python's _ssl needs the version
+# we built against, so it stays vendored.
 payload="$(dirname "$(readlink -f "/proc/$webkit/exe")")"
 banned=0
-for lib in libfontconfig.so libfreetype.so libglib-2.0.so libgobject-2.0.so \
-           libgio-2.0.so libgmodule-2.0.so libgirepository-1.0.so; do
+for lib in libglib-2.0.so libgobject-2.0.so libgio-2.0.so libgmodule-2.0.so \
+           libgirepository-1.0.so libfontconfig.so libfreetype.so libpng16.so \
+           libexpat.so libbrotlicommon.so libbrotlidec.so libbsd.so libmd.so \
+           libffi.so libuuid.so libX11.so libXau.so libXdmcp.so libXext.so \
+           libXft.so libXrender.so libXss.so libxcb.so; do
   # Wheel-vendored copies carry a hash (libfreetype-9fc94c80.so.6...) and are
-  # private to their own module, so they cannot shadow anything. Only the
-  # plain SONAME does.
+  # private to their own module, so they cannot shadow anything. Only the bare
+  # SONAME does, which is what "$lib"* matches and the hashed form does not.
   for hit in "$payload/$lib"*; do
     [ -e "$hit" ] || continue
     echo "native FAIL: payload ships $(basename "$hit") — it will shadow the user's"

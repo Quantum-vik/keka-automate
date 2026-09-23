@@ -18,12 +18,21 @@ Everything you do is recorded in logs/history.jsonl (previous-session info).
 # and the typelibs must come from the user's system, matching the GTK/WebKitGTK
 # pywebview loads there. The build host (Ubuntu 22.04, GLib 2.72) is older than
 # most users' distros, whose GTK needs newer GLib symbols than it has.
+#
+# Same trap, one library family out: tkinter drags libtk/libXft in, and THEY
+# pull the build host's libfontconfig/libfreetype into the onefile dir. That
+# dir is on the loader path, so the stale copies shadow the system's — and the
+# system's own libpangoft2 then fails to resolve against them
+# ("undefined symbol: FcConfigSetDefaultSubstitute" on fontconfig >= 2.17),
+# GTK never loads, and the app silently falls back to the browser.
 # nuitka-project-if: {OS} == "Linux":
 #    nuitka-project: --noinclude-dlls=libglib-2.0.so*
 #    nuitka-project: --noinclude-dlls=libgobject-2.0.so*
 #    nuitka-project: --noinclude-dlls=libgio-2.0.so*
 #    nuitka-project: --noinclude-dlls=libgmodule-2.0.so*
 #    nuitka-project: --noinclude-dlls=libgirepository-1.0.so*
+#    nuitka-project: --noinclude-dlls=libfontconfig.so*
+#    nuitka-project: --noinclude-dlls=libfreetype.so*
 #    nuitka-project: --noinclude-data-files=girepository
 
 import os

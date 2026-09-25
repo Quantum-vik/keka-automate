@@ -4,7 +4,13 @@ SELLER ONLY — generate signed Auto-Keka license keys.
 
     python tools/gen_license.py --name "Jane Doe" --email jane@acme.com
     python tools/gen_license.py --name "Trial" --days 14        # time-limited
+    python tools/gen_license.py --name "Jane" --machine a1b2c3d4e5f60718   # one machine only
     python tools/gen_license.py --pubkey                        # just print the public key
+
+A key minted with --machine only unlocks the machine whose fingerprint matches,
+so the buyer cannot pass the app and their key to a colleague. Ask them for the
+value printed by `Auto-Keka --machine-id`. Without --machine the key works on
+any machine, which is what every key issued before binding does.
 
 On first run it creates tools/license_private.pem — the secret signing key.
 KEEP IT SECRET and BACK IT UP: anyone with it can mint free licenses, and if you
@@ -57,6 +63,8 @@ def main():
     ap.add_argument("--email", default="", help="buyer email")
     ap.add_argument("--days", type=int, default=0, help="validity in days (0 = perpetual)")
     ap.add_argument("--plan", default="pro", help="plan tag")
+    ap.add_argument("--machine", default="",
+                    help="bind to one machine: the buyer's `Auto-Keka --machine-id`")
     ap.add_argument("--pubkey", action="store_true", help="just print the public key and exit")
     a = ap.parse_args()
 
@@ -70,8 +78,10 @@ def main():
         return
 
     exp = int(time.time()) + a.days * 86400 if a.days else 0
-    payload = json.dumps({"n": a.name, "e": a.email, "x": exp, "p": a.plan},
-                         separators=(",", ":")).encode()
+    claims = {"n": a.name, "e": a.email, "x": exp, "p": a.plan}
+    if a.machine:
+        claims["m"] = a.machine.strip()
+    payload = json.dumps(claims, separators=(",", ":")).encode()
     sig = key.sign(payload)
     license_key = _b64(payload) + "." + _b64(sig)
 
@@ -81,6 +91,10 @@ def main():
     print("  " + license_key)
     if exp:
         print(f"\n(expires {time.strftime('%Y-%m-%d', time.localtime(exp))})")
+    if a.machine:
+        print(f"\n(locked to machine {a.machine.strip()} — will not verify anywhere else)")
+    else:
+        print("\n(not machine-locked — works on any machine; pass --machine to bind it)")
 
 
 if __name__ == "__main__":

@@ -245,6 +245,7 @@ class Backend:
         return {
             "licensed": linfo is not None,
             "licenseName": (linfo or {}).get("n", ""),
+            "machineId": lic.machine_id(),
             "clockedIn": self._status == "in",
             "clockInAt": cin, "clockOutAt": cout,
             "scheduleIn": env.get("KEKA_IN_TIME", "09:00"),
@@ -1130,6 +1131,7 @@ USAGE = (
     "  Auto-Keka --check         run the reauth watchdog\n"
     "  Auto-Keka --version       print the version and exit\n"
     "  Auto-Keka --app-path      print the path the scheduler launches and exit\n"
+    "  Auto-Keka --machine-id    print this machine's id (for a machine-locked key)\n"
     "  Auto-Keka --help          show this help\n"
 )
 
@@ -1142,6 +1144,11 @@ def main():
     # smoke test (a compiled binary that can't even print its version is broken).
     if args[:1] in (["--version"], ["-v"]):
         print(f"Auto-Keka {kc.APP_VERSION}")
+        return
+    if args[:1] == ["--machine-id"]:
+        # What a buyer sends the seller to get a key that only unlocks this box.
+        mid = lic.machine_id()
+        print(mid or "unavailable on this machine")
         return
     if args[:1] in (["--help"], ["-h"]):
         print(USAGE)

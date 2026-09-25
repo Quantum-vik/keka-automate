@@ -55,7 +55,7 @@ def _default_browsers_dir():
 
 os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", _default_browsers_dir())
 
-from playwright.sync_api import sync_playwright   # noqa: E402  (must follow the pin above)
+from playwright.sync_api import sync_playwright, Error as PlaywrightError   # noqa: E402  (must follow the pin above)
 
 # ── tesseract discovery (cross-platform) ──────────────────────────────────────
 # Prefer whatever is on PATH; otherwise probe the standard per-OS install dirs.
@@ -828,7 +828,7 @@ def ocr_captcha(page):
 # ── Login helpers ─────────────────────────────────────────────────────────────
 def goto_login_form(page, log):
     """Navigate to Keka and click 'Continue with Password' to reveal the form."""
-    page.goto(BASE_URL, wait_until="domcontentloaded", timeout=30_000)
+    goto_resilient(page, BASE_URL, log, settle_ms=0)
     page.wait_for_timeout(2500)
     page.locator('button:has-text("Continue with Password")').first.click()
     page.wait_for_selector("#imgCaptcha", timeout=10_000)
@@ -1022,7 +1022,7 @@ def interactive_login(otp_getter, log, headless=True):
         page = ctx.new_page()
         try:
             # 1) reuse existing session if it still works
-            page.goto(ATTENDANCE_URL, wait_until="domcontentloaded", timeout=30_000)
+            goto_resilient(page, ATTENDANCE_URL, log, settle_ms=0)
             page.wait_for_timeout(4000)
             if is_logged_in(page):
                 save_session(ctx)
@@ -1051,7 +1051,7 @@ def interactive_login(otp_getter, log, headless=True):
 
             # 4) warm up attendance origin + save
             try:
-                page.goto(ATTENDANCE_URL, wait_until="domcontentloaded", timeout=30_000)
+                goto_resilient(page, ATTENDANCE_URL, log, settle_ms=0)
                 page.wait_for_timeout(4000)
             except Exception:
                 pass
@@ -1476,8 +1476,7 @@ def get_status():
                 pass
         page.on("response", _watch)
         try:
-            page.goto(ATTENDANCE_URL, wait_until="domcontentloaded", timeout=30_000)
-            page.wait_for_timeout(5000)
+            goto_resilient(page, ATTENDANCE_URL)
             if flags["ratelimited"]:
                 return "ratelimited"
             return classify_session_page(
@@ -1581,8 +1580,7 @@ def attempt_relogin(ctx, page, log):
 
     save_session(ctx)
     log.info("Auto-relogin succeeded — session re-saved")
-    page.goto(ATTENDANCE_URL, wait_until="domcontentloaded", timeout=30_000)
-    page.wait_for_timeout(5000)
+    goto_resilient(page, ATTENDANCE_URL, log)
     return True
 
 
@@ -1645,6 +1643,43 @@ def _scheduled_due(action):
         return _now().replace(hour=h, minute=m, second=0, microsecond=0)
     except ValueError:
         return None
+
+
+def goto_resilient(page, url, log=None, attempts=3, settle_ms=5000):
+    """Navigate to `url`, retrying a transient network failure.
+
+    wait_for_network() only proves the host answered a moment ago. A laptop that
+    just woke is often still switching interfaces, and Chromium then aborts the
+    navigation already in flight:
+
+        net::ERR_NETWORK_CHANGED at https://…/#/me/attendance/logs
+
+    Nothing retried that, so a single wobble failed the whole punch and the day
+    was silently lost. Retry a few times with a widening gap, re-checking the
+    host in between; a punch is worth a couple of minutes of patience. Errors
+    that are not network-shaped are raised immediately — there is no point
+    waiting out a bad selector or an expired session.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+            page.wait_for_timeout(settle_ms)
+            return
+        except PlaywrightError as e:
+            msg = str(e)
+            transient = "net::" in msg or "Timeout" in msg or "timeout" in msg
+            if not transient or attempt == attempts:
+                raise
+            wait = 10 * attempt
+            if log:
+                log.warning("Navigation failed (attempt %d/%d): %s — retrying in %ds",
+                            attempt, attempts, msg.splitlines()[0], wait)
+            log_step("goto_resilient: attempt %d failed (%s)", attempt,
+                     msg.splitlines()[0], level=logging.WARNING)
+            time.sleep(wait)
+            # The interface may still be settling; give it a chance to come back
+            # before burning the next attempt.
+            wait_for_network(TENANT_HOST, timeout=wait, interval=2)
 
 
 def wait_for_network(host, timeout=120, interval=5):
@@ -1727,8 +1762,7 @@ def run_punch(action, log_file, scheduled=False):
             # Go straight to the attendance page using the saved session.
             # NOTE: the Keka SPA polls in the background and never reaches
             # "networkidle" — use "domcontentloaded" + a fixed settle wait instead.
-            page.goto(ATTENDANCE_URL, wait_until="domcontentloaded", timeout=30_000)
-            page.wait_for_timeout(5000)
+            goto_resilient(page, ATTENDANCE_URL, log)
 
             if not is_logged_in(page):
                 # Try to recover automatically (password + captcha, no OTP for ~14 days)
@@ -1766,7 +1800,7 @@ def run_punch(action, log_file, scheduled=False):
                 # SPA may still be settling (or another tab just changed state).
                 # Reload, re-check idempotency, and try once more before failing.
                 log.warning("Punch-%s button not found — reloading and retrying", action)
-                page.goto(ATTENDANCE_URL, wait_until="domcontentloaded", timeout=30_000)
+                goto_resilient(page, ATTENDANCE_URL, log, settle_ms=0)
                 page.wait_for_timeout(6000)
                 if action == "in" and page.locator('text="Web Clock-out"').count() > 0:
                     log.info("Already clocked IN after reload — nothing to do")

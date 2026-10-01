@@ -56,6 +56,7 @@ def test_windows_refused_logon_trigger_still_ok(monkeypatch):
 def test_macos_native_schedule_includes_watchdog(tmp_path, monkeypatch):
     monkeypatch.setattr(kc, "APP_EXECUTABLE", "/Applications/Auto-Keka.app/Contents/MacOS/Auto-Keka")
     monkeypatch.setattr(kc.sys, "platform", "darwin")
+    monkeypatch.setattr(kc.os, "getuid", lambda: 501, raising=False)   # absent on Windows
     monkeypatch.setattr(kc.os.path, "expanduser", lambda p: p.replace("~", str(tmp_path)))
     monkeypatch.setattr(kc.subprocess, "run", lambda cmd, **k: kc.subprocess.CompletedProcess(cmd, 0))
     assert kc.install_schedule_native("09:00", "18:00") is True

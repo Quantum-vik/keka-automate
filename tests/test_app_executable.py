@@ -96,6 +96,25 @@ def test_standalone_app_bundle_uses_argv0(tmp_path):
     assert kc._resolve_app_executable(True, compiled, str(exe), phantom) == str(exe)
 
 
+def test_appimage_file_beats_its_vanishing_mount(layout, tmp_path):
+    image = tmp_path / "Auto-Keka-x86_64.AppImage"
+    image.write_text("")
+    compiled = onefile(original_argv0=layout.launcher, containing_dir=None)
+    got = kc._resolve_app_executable(True, compiled, layout.launcher, layout.phantom,
+                                     appimage=str(image))
+    assert got == str(image)
+    # A stale/missing $APPIMAGE falls back to the normal resolution.
+    assert kc._resolve_app_executable(True, compiled, layout.launcher, layout.phantom,
+                                      appimage=str(tmp_path / "gone.AppImage")) == layout.launcher
+
+
+def test_source_run_ignores_appimage(tmp_path):
+    image = tmp_path / "x.AppImage"
+    image.write_text("")
+    assert kc._resolve_app_executable(False, None, "", "/usr/bin/python3",
+                                      appimage=str(image)) == "/usr/bin/python3"
+
+
 def test_app_path_flag_prints_it(capsys, monkeypatch):
     monkeypatch.setattr(kc, "APP_EXECUTABLE", "/opt/Auto-Keka")
     monkeypatch.setattr("sys.argv", ["auto-keka", "--app-path"])

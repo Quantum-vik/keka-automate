@@ -5,6 +5,9 @@ name: Release
 #
 #     git tag v1.0.0 && git push origin v1.0.0
 #
+# Each OS gets its native download, no zips: macOS a .dmg, Windows the .exe
+# itself, Linux an AppImage (runs on any distro).
+#
 # SOURCE IS NEVER SHIPPED — releases contain compiled binaries only, so buyers
 # can't read or patch out the license check. If every build fails, no release
 # is published (nothing leaks). The compiled app is self-contained: it punches
@@ -33,11 +36,13 @@ jobs:
         include:
           - os: macos-latest
             name: Auto-Keka-macos
+            asset: Auto-Keka-macos.dmg
             mode: app          # PyObjC (Dock identity) requires app mode
             macos_icon: icon.icns
             windows_icon: ""
           - os: windows-latest
             name: Auto-Keka-windows
+            asset: Auto-Keka.exe
             mode: onefile
             macos_icon: ""
             windows_icon: icon.ico
@@ -47,6 +52,7 @@ jobs:
           # 22.04 (glibc 2.35) covers far more distros.
           - os: ubuntu-22.04
             name: Auto-Keka-linux
+            asset: Auto-Keka-x86_64.AppImage
             mode: onefile
             macos_icon: ""
             windows_icon: ""
@@ -133,9 +139,7 @@ jobs:
       - name: Package — macOS (.app)
         if: runner.os == 'macOS'
         run: |
-          cd build
-          mv keka_ui.app Auto-Keka.app
-          ditto -c -k --keepParent Auto-Keka.app "../${{ matrix.name }}.zip"
+          mv build/keka_ui.app build/Auto-Keka.app
 
       - name: Sign & notarize — macOS (optional)
         if: runner.os == 'macOS' && env.HAS_APPLE_SIGNING == 'true'
@@ -146,15 +150,20 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: bash packaging/sign_macos.sh build/Auto-Keka.app "${{ matrix.name }}.zip"
+        # The zip is only notarytool's upload format; the release ships the .dmg.
+        run: bash packaging/sign_macos.sh build/Auto-Keka.app "$RUNNER_TEMP/notarize.zip"
 
-      - name: Package — Linux (onefile binary)
+      - name: Disk image — macOS (.dmg)
+        if: runner.os == 'macOS'
+        run: bash packaging/make_dmg.sh build/Auto-Keka.app "${{ matrix.asset }}" Auto-Keka
+
+      - name: Package — Linux (AppImage)
         if: runner.os == 'Linux'
         run: |
           mkdir -p out
           cp build/keka_ui.bin out/Auto-Keka
           chmod +x out/Auto-Keka
-          cd out && zip "../${{ matrix.name }}.zip" Auto-Keka
+          bash packaging/make_appimage.sh out/Auto-Keka icon.png "${{ matrix.asset }}"
 
       - name: Package — Windows (onefile exe)
         if: runner.os == 'Windows'
@@ -164,7 +173,6 @@ jobs:
           if ($env:HAS_WINDOWS_SIGNING -eq 'true') {
             powershell -ExecutionPolicy Bypass -File packaging\sign_windows.ps1 -Exe Auto-Keka.exe
           }
-          Compress-Archive -Path Auto-Keka.exe -DestinationPath "${{ matrix.name }}.zip"
         env:
           WINDOWS_CERTIFICATE_PFX: ${{ secrets.WINDOWS_CERTIFICATE_PFX }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
@@ -188,7 +196,17 @@ jobs:
 
       - name: Smoke test — Linux
         if: runner.os == 'Linux'
-        run: bash packaging/smoke_test.sh out/Auto-Keka
+        run: |
+          bash packaging/smoke_test.sh out/Auto-Keka
+          # The AppImage must report ITSELF as the path schedules launch — not
+          # its mount, which is gone the moment the app exits. Runners have no
+          # FUSE, so extract-and-run; the runtime still sets $APPIMAGE.
+          img="$PWD/${{ matrix.asset }}"
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          out="$("$img" --version)"; echo "smoke: $out"
+          case "$out" in "Auto-Keka "*) ;; *) echo "smoke FAIL: AppImage --version: $out"; exit 1 ;; esac
+          app="$("$img" --app-path)"; echo "smoke: --app-path -> $app"
+          [ "$app" = "$img" ] || { echo "smoke FAIL: --app-path is not the AppImage: $app"; exit 1; }
 
       - name: Smoke test — Windows
         if: runner.os == 'Windows'
@@ -207,7 +225,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
-          path: ${{ matrix.name }}.zip
+          path: ${{ matrix.asset }}
 
   # ── Linux: the compiled app opens its native window ─────────────────────────
   # Runs the 22.04-built binary on the build distro AND a newer one: the GTK
@@ -240,9 +258,11 @@ jobs:
           # process sandbox needs; the check only cares that WebKitGTK loads.
           WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS: "1"
         run: |
-          unzip -q Auto-Keka-linux.zip
-          chmod +x Auto-Keka
-          xvfb-run -a bash packaging/native_window_check.sh ./Auto-Keka 45
+          # The binary inside the AppImage is what links the host's GTK; run it
+          # directly so the check watches one process tree.
+          chmod +x Auto-Keka-x86_64.AppImage
+          ./Auto-Keka-x86_64.AppImage --appimage-extract >/dev/null
+          xvfb-run -a bash packaging/native_window_check.sh squashfs-root/usr/bin/Auto-Keka 45
 
   # ── Native macOS client (SwiftUI menu-bar app over the compiled core) ───────
   # Reuses the macOS binary the matrix above already produced: that binary IS
@@ -268,7 +288,9 @@ jobs:
         id: core
         run: |
           cd core
-          unzip -q Auto-Keka-macos.zip
+          hdiutil attach -nobrowse -readonly -mountpoint mnt Auto-Keka-macos.dmg
+          ditto mnt/Auto-Keka.app Auto-Keka.app
+          hdiutil detach mnt
           # CFBundleExecutable is the app's DEFINED entry binary — the one that
           # answers `--serve`. A blind `find -perm +111 | head -1` would grab
           # Playwright's bundled node/ffmpeg instead and bundle THAT as the core.
@@ -295,13 +317,12 @@ jobs:
 
       - name: Package
         run: |
-          cd macos/build
-          ditto -c -k --keepParent "Auto-Keka Native.app" ../../Auto-Keka-macos-native.zip
+          bash packaging/make_dmg.sh "macos/build/Auto-Keka Native.app" Auto-Keka-macos-native.dmg "Auto-Keka Native"
 
       - uses: actions/upload-artifact@v4
         with:
           name: Auto-Keka-macos-native
-          path: Auto-Keka-macos-native.zip
+          path: Auto-Keka-macos-native.dmg
 
   release:
     needs: [build, macos-native]
@@ -320,7 +341,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           shopt -s nullglob
-          files=(artifacts/*/*.zip)
+          files=(artifacts/*/*)
           [ ${#files[@]} -gt 0 ] || { echo "no binaries built — refusing to release"; exit 1; }
 
           # SHA256SUMS so downloaders can verify integrity (munder-difflin ships

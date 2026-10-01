@@ -94,7 +94,7 @@ GITHUB_REPO = "Quantum-vik/keka-automate"
 FROZEN = "__compiled__" in globals()
 
 
-def _resolve_app_executable(frozen, compiled, argv0, executable, windows=None):
+def _resolve_app_executable(frozen, compiled, argv0, executable, windows=None, appimage=None):
     """The file to launch this app again with (schedules, autostart, the punch
     buttons).
 
@@ -104,9 +104,12 @@ def _resolve_app_executable(frozen, compiled, argv0, executable, windows=None):
     schedule written with it silently never ran. The real launcher is what the
     user started: Nuitka's __compiled__.original_argv0 for onefile, else argv[0].
     Candidates inside the extraction dir are rejected; source runs keep the
-    interpreter."""
+    interpreter. Inside an AppImage everything above lives in a mount that
+    vanishes on exit, so the .AppImage file itself ($APPIMAGE) wins."""
     if not frozen:
         return executable
+    if appimage and os.path.isfile(appimage):
+        return os.path.abspath(appimage)
     if windows is None:
         windows = sys.platform.startswith("win")
     extract_dir = os.path.dirname(os.path.abspath(executable)) if getattr(compiled, "onefile", False) else None
@@ -137,7 +140,8 @@ def _resolve_app_executable(frozen, compiled, argv0, executable, windows=None):
 
 
 APP_EXECUTABLE = _resolve_app_executable(
-    FROZEN, globals().get("__compiled__"), sys.argv[0] if sys.argv else "", sys.executable)
+    FROZEN, globals().get("__compiled__"), sys.argv[0] if sys.argv else "", sys.executable,
+    appimage=os.environ.get("APPIMAGE"))
 
 
 def _app_data_dir():

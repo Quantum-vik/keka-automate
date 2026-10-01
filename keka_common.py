@@ -85,7 +85,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Single source of truth for the app version. release.yml reads THIS for the
 # Nuitka product-version, and the in-app update check compares it against the
 # latest GitHub release tag — so bumping this one line is what a release needs.
-APP_VERSION = "1.0.10"
+APP_VERSION = "1.0.11"
 GITHUB_REPO = "Quantum-vik/keka-automate"
 
 # True when running as a Nuitka-compiled binary (no source tree, no venv).
@@ -839,9 +839,11 @@ def install_desktop_app():
 def get_logger(log_file):
     # File handler always; console handler only for interactive runs. Under
     # launchd/cron, stdout is already redirected to the log file, so adding a
-    # StreamHandler there would double every line.
+    # StreamHandler there would double every line. The windowed Windows build
+    # started by Task Scheduler has NO stdout (None): calling .isatty() on it
+    # crashed every scheduled punch and watchdog run before it logged a line.
     handlers = [logging.FileHandler(log_file, encoding="utf-8")]
-    if sys.stdout.isatty():
+    if getattr(sys, "stdout", None) and sys.stdout.isatty():
         handlers.append(logging.StreamHandler(sys.stdout))
     logging.basicConfig(
         level=logging.INFO,

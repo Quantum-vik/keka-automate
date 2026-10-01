@@ -124,6 +124,12 @@ def launch_setup(log):
     if not proceed:
         log.info("User chose 'Remind me later' — will re-prompt on the next check")
         return
+    if kc.FROZEN:
+        # keka_setup.py isn't bundled in the compiled app — open the dashboard,
+        # which signs in (OTP included) itself. Detached: don't hold the timer.
+        log.info("Opening the app to sign in: %s", kc.APP_EXECUTABLE)
+        subprocess.Popen([kc.APP_EXECUTABLE])
+        return
     # sys.executable is the venv python already running this script — portable
     # across .venv/bin/python (Unix) and .venv\Scripts\python.exe (Windows).
     py    = sys.executable

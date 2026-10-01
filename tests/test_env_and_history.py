@@ -79,3 +79,11 @@ def test_history_tail_limit(history_file):
 
 def test_history_missing_file_is_empty(history_file):
     assert kc.read_history() == []
+
+
+def test_get_logger_survives_missing_stdout(tmp_path, monkeypatch):
+    # Windowed Windows build launched by Task Scheduler: sys.stdout is None.
+    monkeypatch.setattr(kc.sys, "stdout", None)
+    log = kc.get_logger(str(tmp_path / "run.log"))
+    log.info("scheduled run")
+    assert "scheduled run" in (tmp_path / "run.log").read_text(encoding="utf-8")

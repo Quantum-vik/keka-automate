@@ -38,14 +38,19 @@ for a 10-second security code (more on that below 👇).
 
 **No terminal, no Python needed.** Auto-Keka ships as a single self-contained app.
 
-**1 · Download the zip for your OS** and unzip it anywhere (Desktop is fine):
+**1 · Download the file for your OS** from the latest release:
 
-| OS | Zip | Run |
-|----|-----|-----|
-| 🍎 macOS   | `Auto-Keka-macos.zip`   | drag `Auto-Keka.app` to Applications, then open it |
-| 🪟 Windows | `Auto-Keka-windows.zip` | double-click `Auto-Keka.exe` |
-| 🐧 Linux   | `Auto-Keka-linux.zip`   | `chmod +x Auto-Keka && ./Auto-Keka` |
+| OS | Download | Run |
+|----|----------|-----|
+| 🍎 macOS   | `Auto-Keka-macos.dmg`        | open it, drag `Auto-Keka.app` to Applications, then open it |
+| 🪟 Windows | `Auto-Keka.exe`              | move it somewhere permanent (e.g. `Documents`), then double-click |
+| 🐧 Linux   | `Auto-Keka-x86_64.AppImage`  | `chmod +x Auto-Keka-x86_64.AppImage && ./Auto-Keka-x86_64.AppImage` (any distro) |
 
+- **Keep the app where it is.** The punch schedule launches the app from the
+  place you first ran it; if you move it later, open it once from the new place
+  and re-apply the schedule in Settings.
+- **Linux without FUSE** (some minimal installs and containers): run it with
+  `APPIMAGE_EXTRACT_AND_RUN=1 ./Auto-Keka-x86_64.AppImage`.
 - **First run:** the app downloads its private browser engine automatically (one
   time, ~130 MB), shown live in a *"Setting up…"* panel. The captcha reader
   (tesseract) comes from your OS — the app tells you the one command if it's
@@ -367,11 +372,11 @@ python tools/gen_license.py --name "Trial" --days 14        # time-limited key
 
 **Cut a release (compiled binaries, all three OSes):** push a version tag and CI
 does the rest — `.github/workflows/release.yml` builds source-hidden **Nuitka**
-binaries (macOS `.app`, Windows `.exe`, Linux onefile), bakes in the app
-name/icon/metadata, and attaches the zips to a GitHub Release. **Source is never
+binaries, bakes in the app name/icon/metadata, and attaches each OS's native
+download to a GitHub Release: macOS `.dmg`, Windows `.exe`, Linux AppImage. **Source is never
 shipped**, and if no binary compiles the release is refused (nothing leaks).
 ```bash
-git tag v1.0.1 && git push origin v1.0.1     # → Release with Auto-Keka-{macos,linux,windows}.zip
+git tag v1.0.1 && git push origin v1.0.1     # → Release with Auto-Keka-macos.dmg, Auto-Keka.exe, Auto-Keka-x86_64.AppImage
 ```
 The compiled app is fully self-contained: it punches via `<binary> --punch in|out`,
 schedules itself natively (launchd/cron/Task Scheduler), and downloads Chromium

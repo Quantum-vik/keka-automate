@@ -1,14 +1,17 @@
 **Clock in/out on Keka, automatically — compiled apps for macOS, Windows, and Linux. No source, no Python needed.**
 
 ### 📥 Install
-1. Download the zip for **your OS** below and unzip it.
+1. Download the file for **your OS** below.
 2. Run it:
 
-| OS | Zip | Run |
-|----|-----|-----|
-| 🍎 macOS   | `Auto-Keka-macos.zip`   | drag `Auto-Keka.app` to Applications, then open it |
-| 🪟 Windows | `Auto-Keka-windows.zip` | double-click `Auto-Keka.exe` |
-| 🐧 Linux   | `Auto-Keka-linux.zip`   | `chmod +x Auto-Keka && ./Auto-Keka` |
+| OS | Download | Run |
+|----|----------|-----|
+| 🍎 macOS   | `Auto-Keka-macos.dmg`       | open it, drag `Auto-Keka.app` to Applications, then open it |
+| 🪟 Windows | `Auto-Keka.exe`             | move it somewhere permanent (e.g. `Documents`), then double-click |
+| 🐧 Linux   | `Auto-Keka-x86_64.AppImage` | `chmod +x Auto-Keka-x86_64.AppImage && ./Auto-Keka-x86_64.AppImage` — any distro |
+
+   `Auto-Keka-macos-native.dmg` is the optional native macOS menu-bar client.
+   Keep the app where you first run it: the punch schedule launches it from there.
 
 3. The app walks you through everything: license key → Keka login → OTP from
    your email → pick clock-in/out times → done. It punches Mon–Fri on your

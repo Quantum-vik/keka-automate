@@ -1122,6 +1122,14 @@ def run_browser():
     except KeyboardInterrupt: pass
 
 
+def _repair_watchdog_schedule():
+    try:
+        if kc.ensure_watchdog_schedule():
+            kc.log_step("app start: reauth watchdog was missing from the schedule — added")
+    except Exception as e:
+        kc.log_step("app start: watchdog schedule check failed: %s", e, level=logging.WARNING)
+
+
 USAGE = (
     "Auto-Keka — automatic Keka attendance\n"
     "  Auto-Keka                 open the dashboard window (default)\n"
@@ -1189,6 +1197,9 @@ def main():
         print(f"UI file not found: {UI_HTML}", file=sys.stderr); sys.exit(1)
     kc.log_step("app start: Auto-Keka %s (data=%s, licensed=%s)",
                 kc.APP_VERSION, kc.DATA_DIR, lic.is_licensed())
+    # Repair schedules installed before the watchdog was part of them. Off the
+    # main thread: systemctl/schtasks must not delay the window.
+    threading.Thread(target=_repair_watchdog_schedule, daemon=True).start()
     try:
         run_native()
         kc.log_step("app exit: native window closed")

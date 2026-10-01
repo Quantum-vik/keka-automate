@@ -545,7 +545,8 @@ def _strip_keka_cron_lines():
 
 def _is_keka_cron_line(line):
     # Source installs run keka_*.py; the compiled app runs `<binary> --punch in|out`.
-    return any(k in line for k in ("keka_punch", "keka_check", "--punch in", "--punch out"))
+    return any(k in line for k in ("keka_punch", "keka_check", "--punch in", "--punch out",
+                                   "--check"))
 
 
 def install_schedule_linux(in_cmd, out_cmd, check_cmd=None, in_time="09:00",
@@ -666,8 +667,9 @@ def linger_warning():
 
 def install_schedule_native(in_time="09:00", out_time="18:00"):
     """FROZEN-mode scheduler: register Mon-Fri punch jobs that invoke THIS
-    binary with --punch (the shell installers assume a source checkout + venv,
-    which a compiled distribution doesn't have). Best-effort → bool."""
+    binary with --punch, plus the every-6h reauth watchdog (--check). The shell
+    installers assume a source checkout + venv, which a compiled distribution
+    doesn't have. Best-effort → bool."""
     exe = APP_EXECUTABLE
     ih, im = _parse_hhmm(in_time, 9, 0)
     oh, om = _parse_hhmm(out_time, 18, 0)
@@ -676,12 +678,23 @@ def install_schedule_native(in_time="09:00", out_time="18:00"):
             la = os.path.expanduser("~/Library/LaunchAgents")
             os.makedirs(la, exist_ok=True)
             uid = os.getuid()
-            for label, action, h, m in (("com.keka.punchin", "in", ih, im),
-                                        ("com.keka.punchout", "out", oh, om)):
-                cal = "".join(
+
+            def weekdays(h, m):
+                return "<array>" + "".join(
                     f"<dict><key>Weekday</key><integer>{d}</integer>"
                     f"<key>Hour</key><integer>{h}</integer>"
-                    f"<key>Minute</key><integer>{m}</integer></dict>" for d in range(1, 6))
+                    f"<key>Minute</key><integer>{m}</integer></dict>" for d in range(1, 6)) + "</array>"
+
+            # StartInterval fires every 6h of uptime and RunAtLoad covers login —
+            # a calendar slot alone is easy to sleep through (see install_macos.sh).
+            jobs = (("com.keka.punchin", ["--punch", "in", "--scheduled"], "keka_punch_in.log",
+                     f"<key>StartCalendarInterval</key>{weekdays(ih, im)}"),
+                    ("com.keka.punchout", ["--punch", "out", "--scheduled"], "keka_punch_out.log",
+                     f"<key>StartCalendarInterval</key>{weekdays(oh, om)}"),
+                    ("com.keka.reauth", ["--check"], "keka_reauth.log",
+                     "<key>StartInterval</key><integer>21600</integer><key>RunAtLoad</key><true/>"))
+            for label, args, logname, when in jobs:
+                argv = "".join(f"<string>{a}</string>" for a in [exe, *args])
                 plist = os.path.join(la, f"{label}.plist")
                 with open(plist, "w", encoding="utf-8") as f:
                     f.write(
@@ -690,11 +703,10 @@ def install_schedule_native(in_time="09:00", out_time="18:00"):
                         '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
                         '<plist version="1.0"><dict>\n'
                         f'  <key>Label</key><string>{label}</string>\n'
-                        '  <key>ProgramArguments</key><array>'
-                        f'<string>{exe}</string><string>--punch</string><string>{action}</string><string>--scheduled</string></array>\n'
-                        f'  <key>StartCalendarInterval</key><array>{cal}</array>\n'
-                        f'  <key>StandardOutPath</key><string>{log_path(f"keka_punch_{action}.log")}</string>\n'
-                        f'  <key>StandardErrorPath</key><string>{log_path(f"keka_punch_{action}.log")}</string>\n'
+                        f'  <key>ProgramArguments</key><array>{argv}</array>\n'
+                        f'  {when}\n'
+                        f'  <key>StandardOutPath</key><string>{log_path(logname)}</string>\n'
+                        f'  <key>StandardErrorPath</key><string>{log_path(logname)}</string>\n'
                         '</dict></plist>\n')
                 subprocess.run(["launchctl", "bootout", f"gui/{uid}/{label}"],
                                capture_output=True)
@@ -704,20 +716,66 @@ def install_schedule_native(in_time="09:00", out_time="18:00"):
         if sys.platform.startswith("linux"):
             return install_schedule_linux([exe, "--punch", "in", "--scheduled"],
                                           [exe, "--punch", "out", "--scheduled"],
+                                          [exe, "--check"],
                                           in_time=in_time, out_time=out_time)["ok"]
         if sys.platform.startswith("win"):
+            def schtasks(name, tr, *when):
+                return subprocess.run(["schtasks", "/Create", "/F", "/TN", rf"Keka\{name}",
+                                       "/TR", tr, *when], capture_output=True).returncode == 0
             ok = True
             for name, action, t in (("PunchIn", "in", f"{ih:02d}:{im:02d}"),
                                     ("PunchOut", "out", f"{oh:02d}:{om:02d}")):
-                r = subprocess.run(
-                    ["schtasks", "/Create", "/F", "/TN", rf"Keka\{name}",
-                     "/SC", "WEEKLY", "/D", "MON,TUE,WED,THU,FRI",
-                     "/TR", f'"{exe}" --punch {action} --scheduled', "/ST", t],
-                    capture_output=True)
-                ok = ok and r.returncode == 0
+                ok = schtasks(name, f'"{exe}" --punch {action} --scheduled',
+                              "/SC", "WEEKLY", "/D", "MON,TUE,WED,THU,FRI", "/ST", t) and ok
+            ok = schtasks("Reauth", f'"{exe}" --check', "/SC", "HOURLY", "/MO", "6") and ok
+            # ponytail: ONLOGON can need elevation via schtasks; the 6h task alone
+            # still covers it, so a refused logon trigger doesn't fail the install.
+            schtasks("ReauthLogon", f'"{exe}" --check', "/SC", "ONLOGON")
             return ok
     except Exception:
         return False
+
+
+def schedule_status():
+    """Is the OS-level schedule present? → {"punch": bool|None, "watchdog": bool|None}
+    (None = can't tell on this OS). Read by the doctor and the startup repair."""
+    out = {"punch": None, "watchdog": None}
+    try:
+        if sys.platform == "darwin":
+            la = os.path.expanduser("~/Library/LaunchAgents")
+            has = lambda n: os.path.exists(os.path.join(la, f"com.keka.{n}.plist"))
+            out = {"punch": has("punchin") and has("punchout"), "watchdog": has("reauth")}
+        elif sys.platform.startswith("linux"):
+            method = linux_schedule_method()
+            out["punch"] = method is not None
+            if method == "systemd":
+                r = subprocess.run(["systemctl", "--user", "is-enabled", "keka-check.timer"],
+                                   capture_output=True, text=True, timeout=15)
+                out["watchdog"] = r.stdout.strip() == "enabled"
+            elif method == "cron":
+                r = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=15)
+                out["watchdog"] = any(("keka_check" in l or "--check" in l)
+                                      for l in (r.stdout or "").splitlines())
+        elif sys.platform.startswith("win"):
+            q = lambda n: subprocess.run(["schtasks", "/Query", "/TN", rf"Keka\{n}"],
+                                         capture_output=True, text=True).returncode == 0
+            out = {"punch": q("PunchIn"), "watchdog": q("Reauth")}
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return out
+
+
+def ensure_watchdog_schedule():
+    """Compiled builds used to schedule only the punches, so the reauth
+    watchdog never ran and the device pass could lapse with no warning. On app
+    start, re-apply the schedule if the punches are there but the watchdog isn't.
+    → True if it (re)installed. A user who never set a schedule is left alone."""
+    if not FROZEN:
+        return False
+    st = schedule_status()
+    if st["punch"] and st["watchdog"] is False:
+        return bool(install_schedule_native(IN_TIME, OUT_TIME))
+    return False
     return False
 
 
@@ -1565,6 +1623,7 @@ def attempt_relogin(ctx, page, log):
     fails or the remember-device cookie has expired (OTP now required).
     """
     log.warning("Session expired — attempting auto-relogin (password + captcha, no OTP)...")
+    pass_before = session_health().get("remember_exp")
     url = submit_credentials(page, log)
     if url is None:
         log.error("Auto-relogin failed at the password/captcha step")
@@ -1580,6 +1639,10 @@ def attempt_relogin(ctx, page, log):
 
     save_session(ctx)
     log.info("Auto-relogin succeeded — session re-saved")
+    # Does a password relogin renew the 14-day device pass? Log it so we know.
+    fmt = lambda ts: datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts else "none"
+    log.info("Device pass expiry: %s → %s", fmt(pass_before),
+             fmt(session_health().get("remember_exp")))
     goto_resilient(page, ATTENDANCE_URL, log)
     return True
 

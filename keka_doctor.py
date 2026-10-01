@@ -11,7 +11,6 @@ Read-only — it never launches a browser or touches Keka.
 
 import os
 import sys
-import subprocess
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -23,24 +22,6 @@ OK, BAD, WARN = "✓", "✗", "!"
 
 def _report(mark, label, detail=""):
     print(f"  {mark}  {label:<28} {detail}")
-
-
-def _schedule_installed():
-    """Best-effort: is the OS-level punch schedule present? None = can't tell."""
-    try:
-        if sys.platform == "darwin":
-            la = os.path.expanduser("~/Library/LaunchAgents")
-            return all(os.path.exists(os.path.join(la, f"com.keka.{n}.plist"))
-                       for n in ("punchin", "punchout"))
-        if sys.platform.startswith("linux"):
-            return kc.linux_schedule_method() is not None
-        if sys.platform.startswith("win"):
-            r = subprocess.run(["schtasks", "/Query", "/TN", r"Keka\PunchIn"],
-                               capture_output=True, text=True)
-            return r.returncode == 0
-    except Exception:
-        pass
-    return None
 
 
 def _native_window_backend():
@@ -123,7 +104,8 @@ def main():
         _report(WARN, "device pass (2FA skip)", "not found")
 
     # 4) schedule + license (non-fatal context)
-    sched = _schedule_installed()
+    st = kc.schedule_status()
+    sched = st["punch"]
     if sched is True:
         how = ""
         if sys.platform.startswith("linux"):
@@ -135,6 +117,11 @@ def main():
         _report(WARN, "punch schedule", "not installed — apply it from Settings")
     else:
         _report(WARN, "punch schedule", "could not determine")
+    if st["watchdog"] is True:
+        _report(OK, "reauth watchdog", "scheduled every 6h")
+    elif st["watchdog"] is False:
+        _report(WARN, "reauth watchdog", "not scheduled — the device pass can lapse "
+                                         "unwarned; re-apply the schedule from Settings")
     info = lic.license_info()
     if info:
         _report(OK, "license", f"licensed to {info.get('n', '?')}")

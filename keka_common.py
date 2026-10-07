@@ -85,7 +85,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Single source of truth for the app version. release.yml reads THIS for the
 # Nuitka product-version, and the in-app update check compares it against the
 # latest GitHub release tag — so bumping this one line is what a release needs.
-APP_VERSION = "1.0.11"
+APP_VERSION = "1.0.12"
 GITHUB_REPO = "Quantum-vik/keka-automate"
 
 # True when running as a Nuitka-compiled binary (no source tree, no venv).
@@ -944,9 +944,44 @@ def submit_credentials(page, log, max_attempts=12):
 
 
 def is_logged_in(page):
-    """True if the current page is inside the authenticated app (not the login)."""
+    """True if the current page is inside the authenticated app (not the login).
+
+    URL only — this says nothing about whether the page has RENDERED. Pair it
+    with wait_for_attendance_ready() before reading anything off the page.
+    """
     url = page.url
     return TENANT_HOST in url and "app.keka.com" not in url and "Account" not in url
+
+
+def wait_for_attendance_ready(page, log=None, timeout=45_000):
+    """Block until the attendance page has actually drawn its punch button.
+
+    The URL is already /me/attendance/logs while Keka is still showing its
+    loading splash, so is_logged_in() passes and the old code then slept a flat
+    5s, logged "Session valid — attendance page loaded" and read the buttons off
+    a page that was still a logo. On a slow load it found nothing and gave up:
+
+        20:00:20  Navigation failed (attempt 1/3): net::ERR_NETWORK_CHANGED
+        20:00:41  Session valid — attendance page loaded
+        20:00:48  ERROR punch button not found on the attendance page
+
+    — and the debug screenshot was the Keka splash. A clock-out was missed and
+    the day was left open.
+
+    Either button means the SPA is up: "Web Clock-In" when clocked out,
+    "Web Clock-out" when clocked in. Waiting for whichever appears first costs
+    nothing on a fast load and rides out a slow one. False if neither arrived.
+    """
+    try:
+        page.locator('text="Web Clock-In"').or_(
+            page.locator('text="Web Clock-out"')
+        ).first.wait_for(state="visible", timeout=timeout)
+        return True
+    except PlaywrightError:
+        if log:
+            log.warning("Attendance page still had not rendered after %ds",
+                        timeout // 1000)
+        return False
 
 
 def save_session(ctx):
@@ -1541,8 +1576,15 @@ def get_status():
         page.on("response", _watch)
         try:
             goto_resilient(page, ATTENDANCE_URL)
+            # Rate-limit check FIRST: a 429 never renders the buttons, so
+            # waiting for them would stall this probe for the full timeout
+            # before reporting what we already know.
             if flags["ratelimited"]:
                 return "ratelimited"
+            # Same trap as the punch path: the URL is right while the SPA is
+            # still a splash screen, and both button counts would read 0 —
+            # reporting "logged out" for a session that is perfectly fine.
+            wait_for_attendance_ready(page)
             return classify_session_page(
                 page.url,
                 page.locator('text="Web Clock-out"').count() > 0,
@@ -1845,6 +1887,9 @@ def run_punch(action, log_file, scheduled=False):
                     browser.close()
                     sys.exit(1)
 
+            # The URL check above does not mean the SPA has drawn anything yet.
+            # Wait for a real button before trusting what the page says.
+            wait_for_attendance_ready(page, log)
             log.info("Session valid — attendance page loaded")
 
             # Idempotency guard: skip if already in the desired state.
@@ -1870,7 +1915,7 @@ def run_punch(action, log_file, scheduled=False):
                 # Reload, re-check idempotency, and try once more before failing.
                 log.warning("Punch-%s button not found — reloading and retrying", action)
                 goto_resilient(page, ATTENDANCE_URL, log, settle_ms=0)
-                page.wait_for_timeout(6000)
+                wait_for_attendance_ready(page, log)
                 if action == "in" and page.locator('text="Web Clock-out"').count() > 0:
                     log.info("Already clocked IN after reload — nothing to do")
                     log_history("in", "Already clocked in — no double-punch")

@@ -85,7 +85,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Single source of truth for the app version. release.yml reads THIS for the
 # Nuitka product-version, and the in-app update check compares it against the
 # latest GitHub release tag — so bumping this one line is what a release needs.
-APP_VERSION = "1.0.12"
+APP_VERSION = "1.0.13"
 GITHUB_REPO = "Quantum-vik/keka-automate"
 
 # True when running as a Nuitka-compiled binary (no source tree, no venv).
@@ -953,7 +953,7 @@ def is_logged_in(page):
     return TENANT_HOST in url and "app.keka.com" not in url and "Account" not in url
 
 
-def wait_for_attendance_ready(page, log=None, timeout=45_000):
+def wait_for_attendance_ready(page, log=None, timeout=120_000):
     """Block until the attendance page has actually drawn its punch button.
 
     The URL is already /me/attendance/logs while Keka is still showing its
@@ -971,6 +971,12 @@ def wait_for_attendance_ready(page, log=None, timeout=45_000):
     Either button means the SPA is up: "Web Clock-In" when clocked out,
     "Web Clock-out" when clocked in. Waiting for whichever appears first costs
     nothing on a fast load and rides out a slow one. False if neither arrived.
+
+    The default is generous because the punch path has nothing to lose by
+    waiting: the units are Type=oneshot, whose systemd start timeout is
+    infinity, and a punch that lands late still lands. Missing one costs a
+    day of attendance; waiting two minutes costs nothing. Callers that would
+    rather give up and retry later — the status probe — pass a shorter value.
     """
     try:
         page.locator('text="Web Clock-In"').or_(
@@ -1584,7 +1590,11 @@ def get_status():
             # Same trap as the punch path: the URL is right while the SPA is
             # still a splash screen, and both button counts would read 0 —
             # reporting "logged out" for a session that is perfectly fine.
-            wait_for_attendance_ready(page)
+            # Shorter than the punch path on purpose: this probe re-runs every
+            # 15 minutes, and classify_session_page() maps "no buttons" to None
+            # ("keep the previous verdict"), never to session-dead. Giving up
+            # early is free here; blocking the probe for two minutes is not.
+            wait_for_attendance_ready(page, timeout=30_000)
             return classify_session_page(
                 page.url,
                 page.locator('text="Web Clock-out"').count() > 0,

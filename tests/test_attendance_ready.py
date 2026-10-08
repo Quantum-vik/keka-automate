@@ -46,7 +46,7 @@ def test_false_when_the_page_never_renders():
     assert kc.wait_for_attendance_ready(FakePage(False)) is False
 
 
-def test_timeout_is_passed_through_and_generous(monkeypatch):
+def test_punch_path_waits_generously(monkeypatch):
     page = FakePage(True)
     captured = {}
     orig = page.locator_obj.wait_for
@@ -57,8 +57,20 @@ def test_timeout_is_passed_through_and_generous(monkeypatch):
     page.locator_obj.wait_for = spy
 
     kc.wait_for_attendance_ready(page)
-    # A fixed 5s sleep is what caused the miss; the wait must outlast a slow SPA.
-    assert captured["timeout"] >= 30_000
+    # A fixed 5s sleep is what caused the miss. A punch that lands late still
+    # lands; a missed one costs a day, so this default must outlast a slow SPA.
+    assert captured["timeout"] >= 120_000
+
+
+def test_callers_can_shorten_the_wait():
+    """The 15-minute status probe gives up early rather than blocking."""
+    page = FakePage(False)
+    captured = {}
+    page.locator_obj.wait_for = lambda state=None, timeout=None: (
+        captured.update(timeout=timeout), (_ for _ in ()).throw(
+            PlaywrightError("Timeout")))[1]
+    assert kc.wait_for_attendance_ready(page, timeout=30_000) is False
+    assert captured["timeout"] == 30_000
 
 
 def test_failure_is_logged(caplog):

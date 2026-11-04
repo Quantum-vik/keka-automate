@@ -113,7 +113,9 @@ jobs:
       - name: Compile with Nuitka
         uses: Nuitka/Nuitka-Action@main
         with:
-          nuitka-version: main
+          # Pinned: Nuitka 4.3.4 (what `main` gave on 2026-11-04) crashes in its gi plugin
+          # on Gdk, so the Linux build fails. 4.2.2 built v1.0.13 cleanly.
+          nuitka-version: 4.2.2
           script-name: keka_ui.py
           mode: ${{ matrix.mode }}
           include-data-dir: ui=ui

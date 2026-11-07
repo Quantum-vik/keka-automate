@@ -115,3 +115,29 @@ def test_punch_failed_writes_feed_and_notifies(history_file, monkeypatch):
     assert entry["kind"] == "info"
     cin, cout = keka_ui.Backend._today_punches(None, hist)
     assert (cin, cout) == (None, None)
+
+
+def _fail_entry():
+    return {"kind": "info", "msg": "Auto clock-out FAILED — punch button not found"}
+
+
+def test_last_punch_failure_lone_failure_is_returned():
+    hist = [{"kind": "in", "msg": "Clocked in"}, _fail_entry(),
+            {"kind": "info", "msg": "Session refreshed"}]
+    assert kc.last_punch_failure(hist) is hist[1]
+
+
+def test_last_punch_failure_cleared_by_later_punch():
+    assert kc.last_punch_failure([_fail_entry(), {"kind": "out", "msg": "Clocked out"}]) is None
+    assert kc.last_punch_failure([]) is None
+
+
+def test_last_punch_failure_only_cleared_by_the_same_action():
+    hist = [_fail_entry(), {"kind": "in", "msg": "Clocked in"}]
+    assert kc.last_punch_failure(hist) is hist[0]     # today's clock-in ≠ yesterday's clock-out
+
+
+def test_last_punch_failure_counts_a_missed_clock_out():
+    hist = [{"kind": "info", "msg": "Missed auto clock-out not caught up — it's the weekend"}]
+    assert kc.last_punch_failure(hist) is hist[0]
+    assert kc.last_punch_failure(hist + [{"kind": "out", "msg": "Clocked out"}]) is None

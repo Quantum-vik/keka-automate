@@ -92,6 +92,16 @@ OTP_WAIT_SECS = 300
 LIVE_PROBE_SECS = 900   # 15 minutes
 
 
+def reauth_warning(status, now, out_due):
+    """The pop-up to raise when the session goes dead while clocked in and
+    before today's auto clock-out, else None. The punch can relogin on its own
+    with a valid device pass, but not once OTP is needed (KNOWN-ISSUES #5)."""
+    if (status != "in" or out_due is None or now >= out_due
+            or now.weekday() >= 5 or kc.is_paused() or kc.is_timeoff(f"{now:%Y-%m-%d}")):
+        return None   # no auto clock-out due today
+    return f"Sign in before {out_due:%H:%M} or the auto clock-out may fail"
+
+
 # ─── Backend: all state + actions, push-mechanism-agnostic (self.emit) ────────
 class Backend:
     def __init__(self):
@@ -191,6 +201,7 @@ class Backend:
                         self._status, self._alive = s, True
                         self._needs_reauth = self._reauth_tried = False
                     elif s == "dead":
+                        was_reauth = self._needs_reauth
                         # Bounced to login. This is NOT necessarily "sign in with
                         # an OTP" — while the device pass (remember cookie) is
                         # valid, a silent password re-login (no OTP) fixes it. So:
@@ -215,6 +226,12 @@ class Backend:
                             # recovery already attempted this cycle — stay quiet,
                             # the next punch/refresh will re-establish the session
                             self._alive = False
+                        if self._needs_reauth and not was_reauth:
+                            msg = reauth_warning(self._status, kc._now(),
+                                                 kc._scheduled_due("out"))
+                            if msg:
+                                kc.notify(msg)
+                                kc.log_history("info", msg)
                     # None = transient/unknown (SPA settling, maintenance page) —
                     # keep the previous verdict instead of flashing "Session expired".
                     self.push_state()
@@ -253,6 +270,8 @@ class Backend:
             "sessionDaysLeft": days,
             "sessionAlive": alive,
             "tokenExpiresAt": health["token_exp"] * 1000 if health["token_exp"] else None,
+            "identityExpiresAt": health["identity_exp"] * 1000 if health["identity_exp"] else None,
+            "lastFailure": kc.last_punch_failure(hist),
             "week": self._build_week(hist),
             "activity": activity,
             "depsReady": kc.deps_ready(),

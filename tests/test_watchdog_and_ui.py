@@ -3,6 +3,7 @@ import time
 from datetime import datetime
 
 import keka_check as kck
+import keka_common as kc
 import keka_ui
 from conftest import write_session
 
@@ -74,3 +75,26 @@ def test_build_week_places_history_on_correct_day():
         assert len(marked) == 1 and marked[0]["today"]
     else:                                  # weekend: date not in Mon–Fri grid
         assert marked == []
+
+
+# ── reauth warning (KNOWN-ISSUES #5) ─────────────────────────────────────────
+def test_reauth_warning_while_clocked_in_before_out():
+    due = datetime(2026, 11, 6, 20, 0)
+    msg = keka_ui.reauth_warning("in", datetime(2026, 11, 6, 14, 26), due)
+    assert msg == "Sign in before 20:00 or the auto clock-out may fail"
+
+
+def test_reauth_warning_silent_otherwise():
+    due = datetime(2026, 11, 6, 20, 0)
+    assert keka_ui.reauth_warning("out", datetime(2026, 11, 6, 14, 0), due) is None
+    assert keka_ui.reauth_warning(None, datetime(2026, 11, 6, 14, 0), due) is None
+    assert keka_ui.reauth_warning("in", datetime(2026, 11, 6, 20, 30), due) is None
+    assert keka_ui.reauth_warning("in", datetime(2026, 11, 6, 14, 0), None) is None
+
+
+def test_reauth_warning_silent_on_days_without_a_clock_out(monkeypatch):
+    sat = datetime(2026, 11, 7, 14, 0)
+    assert keka_ui.reauth_warning("in", sat, sat.replace(hour=20)) is None
+    fri = datetime(2026, 11, 6, 14, 0)
+    kc.save_timeoff([{"date": "2026-11-06", "kind": "holiday", "note": ""}])
+    assert keka_ui.reauth_warning("in", fri, fri.replace(hour=20)) is None

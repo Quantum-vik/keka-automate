@@ -87,14 +87,23 @@ def main():
     if not h["exists"]:
         _report(BAD, "session", "no session.json — sign in from the app or keka_setup.py")
         failures += 1
-    elif h["alive"] is True:
+    elif h["token_valid"] is True:
         left = (h["token_exp"] - h["checked_at"]) / 3600
         _report(OK, "session token", f"valid ({left:.1f}h left on the access token)")
-    elif h["alive"] is False:
+    elif h["token_valid"] is False:
         _report(BAD, "session token", "EXPIRED — use 'Sign in again' in the app")
         failures += 1
     else:
         _report(WARN, "session token", "present but no token found — state unknown")
+    # WARN, not BAD: it lapses ~16h after every password login, and the punch
+    # signs in again on its own while the device pass below is valid.
+    if h["identity_valid"] is True:
+        left = (h["identity_exp"] - h["checked_at"]) / 3600
+        _report(OK, "login cookie", f"valid ({left:.1f}h left)")
+    elif h["identity_valid"] is False:
+        _report(WARN, "login cookie", "expired — the next punch must sign in again")
+    elif h["exists"]:
+        _report(WARN, "login cookie", "not found")
     if h["remember_valid"] is True:
         days = (h["remember_exp"] - h["checked_at"]) / 86400
         _report(OK, "device pass (2FA skip)", f"{days:.1f} days left")
@@ -117,6 +126,9 @@ def main():
         _report(WARN, "punch schedule", "not installed — apply it from Settings")
     else:
         _report(WARN, "punch schedule", "could not determine")
+    hint = kc.linger_warning()
+    if hint:
+        _report(WARN, "linger (logged-out punches)", " ".join(hint.split()))
     if st["watchdog"] is True:
         _report(OK, "reauth watchdog", "scheduled every 6h")
     elif st["watchdog"] is False:

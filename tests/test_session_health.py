@@ -78,3 +78,36 @@ def test_jwt_exp_garbage_returns_none():
     assert kc._jwt_exp("not-a-jwt") is None
     assert kc._jwt_exp("") is None
     assert kc._jwt_exp(make_jwt()) is None       # JWT with no exp claim
+
+
+def _identity(exp, domain="app.keka.com"):
+    return {"name": ".AspNetCore.Identity.Application", "value": "x",
+            "domain": domain, "path": "/", "expires": exp}
+
+
+def test_live_identity_cookie_is_valid(session_file):
+    write_session(session_file, cookies=[_identity(FUTURE)],
+                  access_token=make_jwt(exp=FUTURE))
+    h = kc.session_health()
+    assert h["identity_exp"] == FUTURE
+    assert h["identity_valid"] is True
+    assert h["alive"] is True
+
+
+def test_dead_identity_cookie_kills_a_live_token(session_file):
+    # 2026-11-06: the SPA had refreshed the token, but the login cookie was dead.
+    write_session(session_file, cookies=[_identity(PAST)],
+                  access_token=make_jwt(exp=FUTURE))
+    h = kc.session_health()
+    assert h["token_valid"] is True
+    assert h["identity_valid"] is False
+    assert h["alive"] is False
+
+
+def test_identity_cookie_on_other_domain_ignored(session_file):
+    write_session(session_file, cookies=[_identity(PAST, domain="evil.example.com")],
+                  access_token=make_jwt(exp=FUTURE))
+    h = kc.session_health()
+    assert h["identity_exp"] is None
+    assert h["identity_valid"] is None
+    assert h["alive"] is True

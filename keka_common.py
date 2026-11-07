@@ -85,7 +85,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Single source of truth for the app version. release.yml reads THIS for the
 # Nuitka product-version, and the in-app update check compares it against the
 # latest GitHub release tag — so bumping this one line is what a release needs.
-APP_VERSION = "1.0.15"
+APP_VERSION = "1.0.16"
 GITHUB_REPO = "Quantum-vik/keka-automate"
 
 # True when running as a Nuitka-compiled binary (no source tree, no venv).
@@ -581,9 +581,10 @@ def install_schedule_linux(in_cmd, out_cmd, check_cmd=None, in_time="09:00",
         gui = "".join(f"{k}={shlex.quote(v)} " for k, v in gui_env.items() if v)
         cal = {"keka-punch-in": f"{im} {ih} * * 1-5", "keka-punch-out": f"{om} {oh} * * 1-5",
                "keka-check": "0 */6 * * *"}
+        # Every job gets the GUI env: the watchdog may open a window, and a punch
+        # needs the display/D-Bus for its failure pop-up (notify-send).
         for name, _desc, cmd, _oncal in jobs:
-            env = gui if name == "keka-check" else ""   # the watchdog may open a window
-            keep.append(f"{cal[name]} {env}{shlex.join(cmd)} >> {shlex.quote(log_file)} 2>&1")
+            keep.append(f"{cal[name]} {gui}{shlex.join(cmd)} >> {shlex.quote(log_file)} 2>&1")
         r = subprocess.run(["crontab", "-"], input="".join(l + "\n" for l in keep),
                            capture_output=True, text=True)
         return {"ok": r.returncode == 0, "method": "cron", "linger": None}
@@ -953,6 +954,21 @@ def is_logged_in(page):
     return TENANT_HOST in url and "app.keka.com" not in url and "Account" not in url
 
 
+LOGIN_BUTTON = 'button:has-text("Continue with Password")'
+# The primary punch button's exact label for each action. Its PRESENCE is the
+# punch state: "Web Clock-out" on screen means clocked in, and vice versa.
+PUNCH_TEXT = {"in": "Web Clock-In", "out": "Web Clock-out"}
+
+
+def on_login_page(page):
+    """True if Keka has bounced to sign-in. The URL alone is not enough: the
+    SPA keeps /#/me/attendance/logs until its own auth check redirects, which
+    can land after goto's settle wait. That is how 2026-11-06's clock-out read
+    a dead session as valid and gave up 4 minutes later on the login page."""
+    return (classify_session_page(page.url, False, False) == "dead"
+            or page.locator(LOGIN_BUTTON).count() > 0)
+
+
 def wait_for_attendance_ready(page, log=None, timeout=120_000):
     """Block until the attendance page has actually drawn its punch button.
 
@@ -977,11 +993,18 @@ def wait_for_attendance_ready(page, log=None, timeout=120_000):
     infinity, and a punch that lands late still lands. Missing one costs a
     day of attendance; waiting two minutes costs nothing. Callers that would
     rather give up and retry later — the status probe — pass a shorter value.
+
+    The login button is in the race too, so a dead session returns False in
+    seconds instead of after the full timeout; callers check on_login_page().
     """
     try:
-        page.locator('text="Web Clock-In"').or_(
-            page.locator('text="Web Clock-out"')
-        ).first.wait_for(state="visible", timeout=timeout)
+        page.locator(f'text="{PUNCH_TEXT["in"]}"').or_(
+            page.locator(f'text="{PUNCH_TEXT["out"]}"')
+        ).or_(page.locator(LOGIN_BUTTON)).first.wait_for(state="visible", timeout=timeout)
+        if page.locator(LOGIN_BUTTON).count() > 0:
+            if log:
+                log.warning("Keka showed its sign-in page instead of attendance")
+            return False
         return True
     except PlaywrightError:
         if log:
@@ -1130,7 +1153,8 @@ def interactive_login(otp_getter, log, headless=True):
             goto_resilient(page, ATTENDANCE_URL, log, settle_ms=0)
             page.wait_for_timeout(4000)
             if is_logged_in(page):
-                save_session(ctx)
+                if _lk:   # unlocked, this snapshot may be older than what's on disk
+                    save_session(ctx)
                 log.info("Existing session still valid")
                 return True
 
@@ -1249,6 +1273,24 @@ def read_history(n=200):
     return out[-n:]
 
 
+def last_punch_failure(hist):
+    """The newest punch_failed() entry (or skipped clock-out) in hist
+    (oldest→newest), unless a real punch of the same action came after it — the
+    UI keeps it on screen until then, since the desktop pop-up is best-effort
+    and easy to miss (KNOWN-ISSUES #11). Today's clock-in doesn't fix
+    yesterday's clock-out."""
+    punched = set()
+    for h in reversed(hist):
+        msg = h.get("msg") or ""
+        if h.get("kind") in ("in", "out"):
+            punched.add(h["kind"])
+        elif ((msg.startswith("Auto clock-") and "FAILED —" in msg)
+              or msg.startswith("Missed auto clock-out not caught up")):
+            if ("in" if msg.startswith("Auto clock-in") else "out") not in punched:
+                return h
+    return None
+
+
 # ── Time off: holidays / planned leave — auto-punch skips these dates ─────────
 # Stored as a small JSON list in DATA_DIR: [{date:"YYYY-MM-DD", kind, note}].
 def _valid_date(s):
@@ -1353,6 +1395,16 @@ def day_punches(history):
         elif k == "out":
             slot["out"] = t
     return days
+
+
+def unclosed_workday(history, now=None):
+    """The most recent weekday before today with a clock-in but no clock-out
+    ("YYYY-MM-DD"), or None. A scheduled clock-out missed past midnight is never
+    caught up (it would record a false time), so the watchdog reminds instead."""
+    today = (now or _now()).strftime("%Y-%m-%d")
+    return max((d for d, s in day_punches(history).items()
+                if d < today and s["in"] and not s["out"] and _valid_date(d)
+                and datetime.strptime(d, "%Y-%m-%d").weekday() < 5), default=None)
 
 
 def attendance_stats(history, schedule_in="09:00", now=None):
@@ -1497,11 +1549,16 @@ def session_health():
       token_valid     True/False for that token, or None if no token found
       remember_exp    unix ts when the 2FA remember-device cookie expires (None if absent)
       remember_valid  True/False for that cookie, or None
-      alive           best static verdict: the access token's validity when known,
-                      else None (unknown). A live probe (get_status) can override.
+      identity_exp    unix ts when the login cookie (.AspNetCore.Identity.Application)
+                      expires (None if absent)
+      identity_valid  True/False for that cookie, or None
+      alive           best static verdict: False once the login cookie is dead,
+                      else the access token's validity when known, else None
+                      (unknown). A live probe (get_status) can override.
     """
     out = {"exists": False, "token_exp": None, "token_valid": None,
-           "remember_exp": None, "remember_valid": None, "alive": None,
+           "remember_exp": None, "remember_valid": None,
+           "identity_exp": None, "identity_valid": None, "alive": None,
            "checked_at": int(time.time())}
     if not os.path.exists(SESSION_FILE):
         return out
@@ -1534,8 +1591,17 @@ def session_health():
             if exp > 0:
                 out["remember_exp"] = exp
                 out["remember_valid"] = exp > now
+        # The login cookie lives ~16h from the last password login and using the
+        # app does not extend it, while the SPA keeps refreshing the access token
+        # — so a live-looking token can sit on a dead session (2026-11-06).
+        elif (c.get("name") == ".AspNetCore.Identity.Application"
+              and (c.get("domain") or "").lstrip(".") == "app.keka.com"):
+            exp = c.get("expires") or 0
+            if exp > 0:
+                out["identity_exp"] = exp
+                out["identity_valid"] = exp > now
 
-    out["alive"] = out["token_valid"]
+    out["alive"] = False if out["identity_valid"] is False else out["token_valid"]
     return out
 
 
@@ -1595,10 +1661,13 @@ def get_status():
             # ("keep the previous verdict"), never to session-dead. Giving up
             # early is free here; blocking the probe for two minutes is not.
             wait_for_attendance_ready(page, timeout=30_000)
+            # A login form can sit under the tenant URL until the SPA redirects
+            if page.locator(LOGIN_BUTTON).count() > 0:
+                return "dead"
             return classify_session_page(
                 page.url,
-                page.locator('text="Web Clock-out"').count() > 0,
-                page.locator('text="Web Clock-In"').count() > 0)
+                page.locator(f'text="{PUNCH_TEXT["out"]}"').count() > 0,
+                page.locator(f'text="{PUNCH_TEXT["in"]}"').count() > 0)
         finally:
             b.close()
 
@@ -1713,7 +1782,17 @@ def punch_failed(action, log, msg):
     label = "in" if action == "in" else "out"
     log.error(msg)
     log_history("info", f"Auto clock-{label} FAILED — {msg}")
-    notify(f"Auto clock-{label} failed: {msg}")
+    if _held_failures is None:
+        notify(f"Auto clock-{label} failed: {msg}")
+    else:
+        _held_failures.append(msg)
+
+
+# A list while run_punch retries a scheduled punch: punch_failed collects the
+# message there instead of notifying, so 9 failed attempts are not 9 pop-ups.
+_held_failures = None
+PUNCH_RETRIES = 8
+PUNCH_RETRY_GAP = 15 * 60
 
 
 # ── Scheduled runs: a caught-up punch must still make sense ───────────────────
@@ -1824,7 +1903,8 @@ def run_punch(action, log_file, scheduled=False):
     Load the saved session and click punch-in/out. No login, no 2FA.
     Exits 1 (with a clear message) if session.json is missing or expired.
     scheduled=True (the OS scheduler passes --scheduled) adds the catch-up
-    window and a wait for the network; the app's manual buttons leave it off.
+    window, a wait for the network, and retries every 15 min while the window
+    is open; the app's manual buttons leave it off (one attempt).
     """
     log = get_logger(log_file)
     label = "In" if action == "in" else "Out"
@@ -1852,26 +1932,111 @@ def run_punch(action, log_file, scheduled=False):
         if not ok:
             log.info("Scheduled punch-%s not caught up — %s", label, why)
             log_history("info", f"Missed auto clock-{action} not caught up — {why}")
-            if action == "out" and "earlier day" in why:
-                notify(f"Auto-Keka missed a clock-out while this computer was asleep — {why}")
+            # Every case, the weekend one too: a clock-out punched late records
+            # a false time, so the day can only be fixed by hand in Keka.
+            if action == "out":
+                notify("Auto-Keka missed a clock-out while this computer was off or asleep — "
+                       "open Keka and fix that day's clock-out by hand")
             return
         due = _scheduled_due(action)
         if due and _now() - due > timedelta(minutes=2):
             log.info("Catching up punch-%s that was due %s", label, f"{due:%H:%M}")
             log_history("info", f"Catching up missed auto clock-{action} (was due {due:%H:%M})")
-        if not wait_for_network(TENANT_HOST):
-            punch_failed(action, log, f"no network connection to {TENANT_HOST} after 2 minutes")
-            sys.exit(1)
+
+    if not scheduled:
+        return _punch_once(action, log, scheduled)
+
+    # Retry here, not in the scheduler: Task Scheduler, launchd and cron can't
+    # retry on an exit code, and the systemd units have no Restart=. Each
+    # attempt takes and releases the session lock itself, so the app can sign
+    # in during the gap.
+    global _held_failures
+    started = int(time.time() * 1000)   # same unit as history "ts"
+    gap = timedelta(seconds=PUNCH_RETRY_GAP)
+    deadline = _now() + gap * PUNCH_RETRIES   # attempts can take minutes each
+    out_due = _scheduled_due("out")
+    fix = "Fix it in Keka by hand."
+    try:
+        for attempt in range(PUNCH_RETRIES + 1):
+            _held_failures = []
+            try:
+                r = _punch_once(action, log, scheduled)
+                if attempt:
+                    notify(f"Auto clock-{action} succeeded on retry at {_now():%H:%M}")
+                return r
+            except SystemExit as e:
+                if e.code in (0, None):
+                    raise
+                err = e
+            except Exception as e:
+                err = e
+            last = _held_failures[-1] if _held_failures else "see the punch log"
+            if getattr(err, "code", None) == 2:   # waiting won't fix it
+                stop = "can't be retried"
+                fix = f"Open Auto-Keka, sign in, and clock {action} from the app."
+                break
+            nxt = _now() + gap
+            # A clock-in retry still running when the clock-out job starts can
+            # land after it: the clock-out finds nothing to do and the day stays
+            # open. So the last clock-in retry starts a full gap before clock-out.
+            if (attempt == PUNCH_RETRIES or nxt > deadline
+                    or (action == "in" and out_due and nxt + gap > out_due)):
+                stop = f"gave up after {attempt + 1} attempts"
+                break
+            if attempt == 0:
+                plan = f"will retry every {PUNCH_RETRY_GAP // 60} min until {deadline:%H:%M} at the latest"
+                log.warning("Punch-%s failed — %s", label, plan)
+                log_history("info", f"Auto clock-{action} {plan}")
+                notify(f"Auto clock-{action} failed: {last} — {plan}")
+            time.sleep(PUNCH_RETRY_GAP)
+            # sleep() doesn't count suspended time on Linux; the clock does
+            ok, why = scheduled_punch_window(action)
+            if not ok:
+                stop = f"stopped retrying — {why}"
+                break
+            if _now() > deadline:
+                stop = f"gave up after {attempt + 1} attempts"
+                break
+            why = ("automation paused" if is_paused()
+                   else "time off today" if is_timeoff(today) else None)
+            if why:
+                log.info("No more retries of punch-%s — %s", label, why)
+                log_history("info", f"Auto clock-{action} retries stopped — {why}")
+                return
+            if any(h.get("kind") == action and h.get("ts", 0) >= started
+                   for h in read_history(50)):
+                log.info("Clocked %s by hand meanwhile — no more retries", action)
+                log_history("info", f"Auto clock-{action} retries stopped — clocked {action} by hand")
+                return
+            log.info("Retrying punch-%s (attempt %d of %d)", label, attempt + 2, PUNCH_RETRIES + 1)
+    finally:
+        _held_failures = None
+    log.error("Punch-%s %s", label, stop)
+    log_history("info", f"Auto clock-{action} {stop} — {fix}")
+    notify(f"Auto clock-{action} failed: {last} — {stop}. {fix}")
+    raise err
+
+
+def _punch_once(action, log, scheduled):
+    """One punch attempt after run_punch's gates. Exits non-zero or raises on
+    failure; run_punch decides whether to try again. Exit 2 = needs the user
+    (no credentials/session, no tesseract, OTP required): never retried, since
+    each retry of a relogin is another captcha round that risks Keka flagging
+    the account."""
+    label = "In" if action == "in" else "Out"
+    if scheduled and not wait_for_network(TENANT_HOST):
+        punch_failed(action, log, f"no network connection to {TENANT_HOST} after 2 minutes")
+        sys.exit(1)
 
     if not EMAIL or not PASSWORD:
         punch_failed(action, log,
                      f"KEKA_EMAIL / KEKA_PASSWORD missing — set them in {ENV_FILE}")
-        sys.exit(1)
+        sys.exit(2)
 
     if not os.path.exists(SESSION_FILE):
         punch_failed(action, log,
                      "no saved session — open Auto-Keka and sign in")
-        sys.exit(1)
+        sys.exit(2)
 
     _lk = _acquire_session_lock(timeout=120, log=log)
     try:
@@ -1880,42 +2045,45 @@ def run_punch(action, log_file, scheduled=False):
             ctx     = browser.new_context(storage_state=SESSION_FILE)
             page    = ctx.new_page()
 
+            def reach_attendance():
+                """Wait for the punch buttons; if Keka bounced to sign-in
+                (now, or late, after the SPA's auth check), log in again.
+                The three outcomes: ready → True; still a splash → False
+                (caller reloads/retries); dead and no relogin → exit 1, or
+                2 when Keka wants an OTP."""
+                ready = is_logged_in(page) and wait_for_attendance_ready(page, log)
+                if not ready and on_login_page(page):
+                    # Recover automatically (password + captcha, no OTP for ~14 days)
+                    if not attempt_relogin(ctx, page, log):
+                        otp = "SendCode" in page.url or "VerifyCode" in page.url
+                        shot = tmp_path(f"keka_punch{action}_expired_{datetime.now():%Y%m%d_%H%M%S}.png")
+                        page.screenshot(path=shot)
+                        punch_failed(action, log,
+                                     ("session expired and Keka wants an OTP" if otp else
+                                      "session expired and automatic sign-in failed") +
+                                     " — open Auto-Keka and press Refresh to sign in again")
+                        log.error("Screenshot: %s", shot)
+                        browser.close()
+                        sys.exit(2 if otp else 1)
+                    ready = wait_for_attendance_ready(page, log)
+                return ready
+
             # Go straight to the attendance page using the saved session.
             # NOTE: the Keka SPA polls in the background and never reaches
             # "networkidle" — use "domcontentloaded" + a fixed settle wait instead.
             goto_resilient(page, ATTENDANCE_URL, log)
+            if reach_attendance():
+                log.info("Session valid — attendance page loaded")
+            else:
+                log.warning("Attendance page not ready — trying the punch anyway")
 
-            if not is_logged_in(page):
-                # Try to recover automatically (password + captcha, no OTP for ~14 days)
-                if not attempt_relogin(ctx, page, log):
-                    shot = tmp_path(f"keka_punch{action}_expired_{datetime.now():%Y%m%d_%H%M%S}.png")
-                    page.screenshot(path=shot)
-                    punch_failed(action, log,
-                                 "session expired and an OTP is needed — open "
-                                 "Auto-Keka and press Refresh to sign in again")
-                    log.error("Screenshot: %s", shot)
-                    browser.close()
-                    sys.exit(1)
-
-            # The URL check above does not mean the SPA has drawn anything yet.
-            # Wait for a real button before trusting what the page says.
-            wait_for_attendance_ready(page, log)
-            log.info("Session valid — attendance page loaded")
-
-            # Idempotency guard: skip if already in the desired state.
-            # Clocked-in  → primary button reads "Web Clock-out"
-            # Clocked-out → primary button reads "Web Clock-In"
-            already_in  = page.locator('text="Web Clock-out"').count() > 0
-            already_out = page.locator('text="Web Clock-In"').count() > 0
-            if action == "in" and already_in:
-                log.info("Already clocked IN — nothing to do")
-                log_history("in", "Already clocked in — no double-punch")
-                browser.close()
-                cleanup_pngs(log)
-                return
-            if action == "out" and already_out:
-                log.info("Already clocked OUT — nothing to do")
-                log_history("out", "Already clocked out — no double-punch")
+            # Idempotency guard: skip if already in the desired state, i.e. the
+            # page shows the OTHER action's button. Logged as kind "info": the
+            # UI reads "in"/"out" history back as real punch timestamps.
+            other = "out" if action == "in" else "in"
+            if page.locator(f'text="{PUNCH_TEXT[other]}"').count() > 0:
+                log.info("Already clocked %s — nothing to do", action.upper())
+                log_history("info", f"Already clocked {action} — no double-punch")
                 browser.close()
                 cleanup_pngs(log)
                 return
@@ -1925,14 +2093,10 @@ def run_punch(action, log_file, scheduled=False):
                 # Reload, re-check idempotency, and try once more before failing.
                 log.warning("Punch-%s button not found — reloading and retrying", action)
                 goto_resilient(page, ATTENDANCE_URL, log, settle_ms=0)
-                wait_for_attendance_ready(page, log)
-                if action == "in" and page.locator('text="Web Clock-out"').count() > 0:
-                    log.info("Already clocked IN after reload — nothing to do")
-                    log_history("in", "Already clocked in — no double-punch")
-                    browser.close(); cleanup_pngs(log); return
-                if action == "out" and page.locator('text="Web Clock-In"').count() > 0:
-                    log.info("Already clocked OUT after reload — nothing to do")
-                    log_history("out", "Already clocked out — no double-punch")
+                reach_attendance()
+                if page.locator(f'text="{PUNCH_TEXT[other]}"').count() > 0:
+                    log.info("Already clocked %s after reload — nothing to do", action.upper())
+                    log_history("info", f"Already clocked {action} — no double-punch")
                     browser.close(); cleanup_pngs(log); return
                 if not click_punch(page, log, action):
                     shot = tmp_path(f"keka_punch{action}_debug_{datetime.now():%Y%m%d_%H%M%S}.png")
@@ -1943,20 +2107,45 @@ def run_punch(action, log_file, scheduled=False):
                     browser.close()
                     sys.exit(1)
 
-            page.wait_for_timeout(3000)
-
-            # Re-save session so its expiry keeps rolling forward
+            # click_punch is also True when no confirm dialog showed up, so it
+            # proves nothing. A punch that landed swaps in the other button —
+            # sometimes only after a reload. Failing a punch that did land would
+            # make the retry see "already clocked" and never record it.
             try:
-                save_session(ctx)
-            except Exception:
-                pass
+                page.locator(f'text="{PUNCH_TEXT[other]}"').first.wait_for(
+                    state="visible", timeout=30_000)
+            except PlaywrightError:
+                log.warning("Punch-%s not confirmed yet — reloading to check", action)
+                goto_resilient(page, ATTENDANCE_URL, log, settle_ms=0)
+                wait_for_attendance_ready(page, log)
+                if page.locator(f'text="{PUNCH_TEXT[other]}"').count() == 0:
+                    shot = tmp_path(f"keka_punch{action}_unconfirmed_{datetime.now():%Y%m%d_%H%M%S}.png")
+                    page.screenshot(path=shot)
+                    punch_failed(action, log,
+                                 f"clicked the punch button but \"{PUNCH_TEXT[other]}\" never "
+                                 f"appeared — check Keka (screenshot: {shot})")
+                    browser.close()
+                    sys.exit(1)
+            # Recorded before anything below can throw and lose it
+            log_history(action, f"Clocked {'in' if action == 'in' else 'out'}")
+
+            # Re-save session so its expiry keeps rolling forward — unless the
+            # lock timed out: then another process may have saved fresher cookies.
+            if _lk:
+                try:
+                    save_session(ctx)
+                except Exception:
+                    pass
 
             shot = tmp_path(f"keka_punch{action}_{datetime.now():%Y%m%d_%H%M%S}.png")
             page.screenshot(path=shot)
             log.info("Screenshot: %s", shot)
             log.info("=== Punch-%s complete ===", label)
-            log_history(action, f"Clocked {'in' if action == 'in' else 'out'}")
             browser.close()
+    except pytesseract.TesseractNotFoundError:
+        punch_failed(action, log, "captcha reader (tesseract) is not installed — install it "
+                                  "(Linux: tesseract-ocr tesseract-ocr-eng), then retry")
+        sys.exit(2)
     except Exception:
         log.exception("Unhandled error during Punch-%s", label)
         punch_failed(action, log, "unexpected error — see the punch log")

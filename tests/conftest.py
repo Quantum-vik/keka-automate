@@ -6,12 +6,38 @@ import os
 import sys
 import json
 import base64
+import logging
+import tempfile
 
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Importing keka_common creates DATA_DIR/logs and opens logs/auto-keka.log, so point
+# the data dir at a throwaway folder first (also covers license.LICENSE_FILE and
+# subprocesses that inherit os.environ). macOS always uses ~/Library and isn't covered.
+_IMPORT_DATA = tempfile.mkdtemp(prefix="auto-keka-test-")
+os.environ["XDG_DATA_HOME"] = os.environ["APPDATA"] = _IMPORT_DATA
+
 import keka_common as kc  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _isolate_data_dir(tmp_path, monkeypatch):
+    """Every test gets its own DATA_DIR; the opt-in fixtures below override it."""
+    d = tmp_path / "Auto-Keka"
+    (d / "logs").mkdir(parents=True)
+    for name, path in (("DATA_DIR", d), ("SESSION_FILE", d / "session.json"),
+                       ("SESSION_LOCK_FILE", d / "session.lock"),
+                       ("TIMEOFF_FILE", d / "timeoff.json"),
+                       ("PAUSE_FILE", d / "paused.flag"), ("ENV_FILE", d / ".env"),
+                       ("LOG_DIR", d / "logs"), ("APP_LOG_FILE", d / "logs" / "auto-keka.log"),
+                       ("HISTORY_FILE", d / "logs" / "history.jsonl"), ("TMP_DIR", tmp_path)):
+        monkeypatch.setattr(kc, name, str(path))
+    logger = logging.getLogger("auto-keka-test")
+    logger.propagate = False
+    logger.handlers = [logging.NullHandler()]
+    monkeypatch.setattr(kc, "_app_logger", logger)
 
 
 @pytest.fixture

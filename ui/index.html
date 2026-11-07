@@ -289,6 +289,7 @@
   .qr { display:flex; gap:16px; align-items:center; }
   .qr .meta { margin:0; font-size:13px; }
   #remoteUrl { color:var(--ink); font-weight:600; user-select:text; -webkit-user-select:text; word-break:break-all; margin-bottom:6px; }
+  #remoteLan { user-select:text; -webkit-user-select:text; word-break:break-all; margin-bottom:6px; }
   .tf-add { display:grid; grid-template-columns:1.3fr 1fr auto; gap:10px; align-items:end; }
   .tf-add > div { display:flex; flex-direction:column; gap:5px; min-width:0; }
   .tf-add label { font-size:13px; font-weight:600; color:var(--ink-2); }
@@ -550,7 +551,8 @@
             <img id="remoteQr" alt="QR code for the phone remote" style="display:none;width:132px;height:132px;border-radius:6px;background:#fff;padding:6px" />
             <div>
               <div class="meta" id="remoteUrl"></div>
-              <div class="meta">Scan with your phone camera. Phone and computer must be on the same Wi-Fi.
+              <div class="meta" id="remoteLan" style="display:none"></div>
+              <div class="meta" id="remoteHelp">Scan with your phone camera. Phone and computer must be on the same Wi-Fi.
                 The link carries your private access token, so don't share it.</div>
             </div>
           </div>
@@ -1442,6 +1444,12 @@ async function loadRemoteInfo(){
     if (!r || !r.enabled) { sect.style.display = "none"; return; }
     sect.style.display = "block";
     $("#remoteUrl").textContent = r.url;
+    const ts = r.via === "tailscale", lan = ts && r.lanUrl && r.lanUrl !== r.url;
+    $("#remoteLan").textContent = lan ? "Same Wi-Fi: " + r.lanUrl : "";
+    $("#remoteLan").style.display = lan ? "block" : "none";
+    $("#remoteHelp").textContent = "Scan with your phone camera. " + (ts
+      ? "Works anywhere your phone is on Tailscale."
+      : "Phone and computer must be on the same Wi-Fi.") + " The link carries your private access token, so don't share it.";
     if (r.qr) { $("#remoteQr").src = "data:image/png;base64," + r.qr; $("#remoteQr").style.display = "inline-block"; }
   } catch (_) { sect.style.display = "none"; }
 }

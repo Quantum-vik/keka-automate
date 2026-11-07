@@ -68,6 +68,7 @@ import queue
 import atexit
 import socket
 import logging
+import ipaddress
 import threading
 import subprocess
 from datetime import datetime
@@ -349,10 +350,18 @@ class Backend:
             return {"ok": rc == 0 and ready, "ready": ready}
 
     def remote_info(self):
-        """URL + QR for the phone remote (empty when the server isn't up)."""
-        url = _REMOTE.get("url")
-        if not url:
+        """URL + QR for the phone remote (empty when the server isn't up). url/qr are
+        the one to scan: the Tailscale address when it's up, else the LAN one."""
+        lan_url = _REMOTE.get("url")
+        if not lan_url:
             return {"enabled": False}
+        # Checked per call so Tailscale started after launch still shows up.
+        ts = _tailscale_ip()
+        import urllib.parse
+        url = lan_url
+        if ts:
+            u = urllib.parse.urlsplit(lan_url)
+            url = u._replace(netloc=f"{ts}:{u.port}").geturl()
         qr = None
         try:
             import io
@@ -363,7 +372,11 @@ class Backend:
             qr = base64.b64encode(buf.getvalue()).decode()
         except Exception:
             pass                     # no qrcode lib — the URL alone still works
-        return {"enabled": True, "url": url, "qr": qr}
+        # With an exit node the "LAN" route is the tailnet too, so there's no Wi-Fi URL to offer.
+        if lan_url == url or ipaddress.ip_address(urllib.parse.urlsplit(lan_url).hostname) in _TAILNET:
+            lan_url = None
+        return {"enabled": True, "url": url, "qr": qr,
+                "via": "tailscale" if ts else "lan", "lanUrl": lan_url}
 
     def activate_license(self, key):
         """Validate + store a license key. Returns {ok, name|message}."""
@@ -1064,16 +1077,31 @@ def _remote_token():
         return secrets.token_urlsafe(16)   # per-run token if the disk write fails
 
 
-def _lan_ip():
-    import socket
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+def _route_ip(dest):
+    """Local IP the OS would send from to reach dest (UDP connect sends no traffic)."""
     try:
-        s.connect(("8.8.8.8", 80))       # no traffic sent — just picks the LAN route
-        return s.getsockname()[0]
-    except Exception:
-        return "127.0.0.1"
-    finally:
-        s.close()
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect((dest, 80))
+            return s.getsockname()[0]
+    except OSError:              # socket() itself can fail too (EMFILE)
+        return None
+
+
+def _lan_ip():
+    return _route_ip("8.8.8.8") or "127.0.0.1"
+
+
+_TAILNET = ipaddress.ip_network("100.64.0.0/10")
+
+
+def _tailscale_ip():
+    """This machine's tailnet IP when Tailscale is up (100.100.100.100 is its
+    MagicDNS address, so its route leaves via the tailnet), else None."""
+    # ponytail: a host whose own LAN IP is carrier CGNAT (100.64/10), or another VPN
+    # in that range (Cloudflare WARP full-tunnel, 100.96/12), would read as
+    # Tailscale; confirm with `tailscale ip -4` if anyone hits it.
+    ip = _route_ip("100.100.100.100")
+    return ip if ip and ipaddress.ip_address(ip) in _TAILNET else None
 
 
 def start_remote_server(backend):

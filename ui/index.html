@@ -977,6 +977,14 @@ function renderWeek(week) {
 const FMT_DAY = new Intl.DateTimeFormat("en-US", {weekday:"short",month:"short",day:"numeric"});
 const FMT_DAY_Y = new Intl.DateTimeFormat("en-US", {weekday:"short",month:"short",day:"numeric",year:"numeric"});
 function fmtDay(d, now){ return (d.getFullYear() === now.getFullYear() ? FMT_DAY : FMT_DAY_Y).format(d); }
+/* "Today" / "Yesterday" / "Fri, Nov 6" for an ISO day, relative to `now` */
+function feedDay(iso, now){ const d = new Date(iso + "T00:00:00");
+  if (isNaN(d)) return null;
+  const ago = Math.round((new Date(isoDay(now) + "T00:00:00") - d) / 864e5);
+  return ago === 0 ? "Today" : ago === 1 ? "Yesterday" : fmtDay(d, now); }
+/* ISO dates inside messages read like the stamps (history text itself is unchanged) */
+function humanDates(m, now){ return String(m ?? "").replace(/\b\d{4}-\d{2}-\d{2}\b/g, iso => {
+  const d = new Date(iso + "T00:00:00"); return isNaN(d) ? iso : fmtDay(d, now); }); }
 let _feedMemo = {};
 function renderFeed(items) {
   // Labels depend on today's date ("Today"/"Yesterday" roll at midnight), so the
@@ -985,16 +993,9 @@ function renderFeed(items) {
   const now = new Date(), today = isoDay(now);
   if (_feedMemo.items === items && _feedMemo.len === items.length && _feedMemo.today === today)
     return setHTML("#feed", _feedMemo.html);
-  const day = iso => { const d = new Date(iso + "T00:00:00");
-    if (isNaN(d)) return null;
-    const ago = Math.round((new Date(today + "T00:00:00") - d) / 864e5);
-    return ago === 0 ? "Today" : ago === 1 ? "Yesterday" : fmtDay(d, now); };
-  const stamp = a => [day(a.date || today), a.time].filter(Boolean).join(" · ");   // no date = a live line: today
-  // ISO dates inside messages read like the stamps (history text itself is unchanged)
-  const msg = m => String(m ?? "").replace(/\b\d{4}-\d{2}-\d{2}\b/g, iso => {
-    const d = new Date(iso + "T00:00:00"); return isNaN(d) ? iso : fmtDay(d, now); });
+  const stamp = a => [feedDay(a.date || today, now), a.time].filter(Boolean).join(" · ");   // no date = a live line: today
   const html = items.slice(0,12).map(a => `
-    <div class="item k-${esc(a.kind)}"><span class="t">${esc(stamp(a))}</span><i></i><span class="m">${esc(msg(a.msg))}</span></div>`).join("");
+    <div class="item k-${esc(a.kind)}"><span class="t">${esc(stamp(a))}</span><i></i><span class="m">${esc(humanDates(a.msg, now))}</span></div>`).join("");
   _feedMemo = { items, len: items.length, today, html };
   setHTML("#feed", html);
 }
@@ -1030,7 +1031,10 @@ function renderUpdateBanner(){
 function renderFailBanner(){
   const f = STATE.lastFailure;
   setStyle("#failBanner", "display", f ? "flex" : "none");
-  if (f) setText("#failText", `${f.date} ${f.time}: ${f.msg}. Check Keka.`);
+  if (!f) return;
+  // same stamp as the feed; recomputed each render so Today/Yesterday roll at midnight
+  const now = new Date(), stamp = [f.date && feedDay(f.date, now), f.time].filter(Boolean).join(" · ");
+  setText("#failText", `${stamp ? stamp + " — " : ""}${humanDates(f.msg, now)}. Check Keka.`);
 }
 
 /* ── off-day banner (rate-limited / paused / leave / holiday — auto-punch skipped) */

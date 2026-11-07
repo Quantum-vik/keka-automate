@@ -953,6 +953,17 @@ def is_logged_in(page):
     return TENANT_HOST in url and "app.keka.com" not in url and "Account" not in url
 
 
+LOGIN_BUTTON = 'button:has-text("Continue with Password")'
+
+
+def on_login_page(page):
+    """True if Keka has bounced to sign-in. The URL alone is not enough: the
+    SPA keeps /#/me/attendance/logs until its own auth check redirects, which
+    can land after goto's settle wait. That is how 2026-11-06's clock-out read
+    a dead session as valid and gave up 4 minutes later on the login page."""
+    return not is_logged_in(page) or page.locator(LOGIN_BUTTON).count() > 0
+
+
 def wait_for_attendance_ready(page, log=None, timeout=120_000):
     """Block until the attendance page has actually drawn its punch button.
 
@@ -977,11 +988,18 @@ def wait_for_attendance_ready(page, log=None, timeout=120_000):
     infinity, and a punch that lands late still lands. Missing one costs a
     day of attendance; waiting two minutes costs nothing. Callers that would
     rather give up and retry later — the status probe — pass a shorter value.
+
+    The login button is in the race too, so a dead session returns False in
+    seconds instead of after the full timeout; callers check on_login_page().
     """
     try:
         page.locator('text="Web Clock-In"').or_(
             page.locator('text="Web Clock-out"')
-        ).first.wait_for(state="visible", timeout=timeout)
+        ).or_(page.locator(LOGIN_BUTTON)).first.wait_for(state="visible", timeout=timeout)
+        if page.locator(LOGIN_BUTTON).count() > 0:
+            if log:
+                log.warning("Keka showed its sign-in page instead of attendance")
+            return False
         return True
     except PlaywrightError:
         if log:
@@ -1880,27 +1898,34 @@ def run_punch(action, log_file, scheduled=False):
             ctx     = browser.new_context(storage_state=SESSION_FILE)
             page    = ctx.new_page()
 
+            def reach_attendance():
+                """Wait for the punch buttons; if Keka bounced to sign-in
+                (now, or late, after the SPA's auth check), log in again.
+                The three outcomes: ready → True; still a splash → False
+                (caller reloads/retries); dead and no relogin → exit 1."""
+                ready = is_logged_in(page) and wait_for_attendance_ready(page, log)
+                if not ready and on_login_page(page):
+                    # Recover automatically (password + captcha, no OTP for ~14 days)
+                    if not attempt_relogin(ctx, page, log):
+                        shot = tmp_path(f"keka_punch{action}_expired_{datetime.now():%Y%m%d_%H%M%S}.png")
+                        page.screenshot(path=shot)
+                        punch_failed(action, log,
+                                     "session expired and an OTP is needed — open "
+                                     "Auto-Keka and press Refresh to sign in again")
+                        log.error("Screenshot: %s", shot)
+                        browser.close()
+                        sys.exit(1)
+                    ready = wait_for_attendance_ready(page, log)
+                return ready
+
             # Go straight to the attendance page using the saved session.
             # NOTE: the Keka SPA polls in the background and never reaches
             # "networkidle" — use "domcontentloaded" + a fixed settle wait instead.
             goto_resilient(page, ATTENDANCE_URL, log)
-
-            if not is_logged_in(page):
-                # Try to recover automatically (password + captcha, no OTP for ~14 days)
-                if not attempt_relogin(ctx, page, log):
-                    shot = tmp_path(f"keka_punch{action}_expired_{datetime.now():%Y%m%d_%H%M%S}.png")
-                    page.screenshot(path=shot)
-                    punch_failed(action, log,
-                                 "session expired and an OTP is needed — open "
-                                 "Auto-Keka and press Refresh to sign in again")
-                    log.error("Screenshot: %s", shot)
-                    browser.close()
-                    sys.exit(1)
-
-            # The URL check above does not mean the SPA has drawn anything yet.
-            # Wait for a real button before trusting what the page says.
-            wait_for_attendance_ready(page, log)
-            log.info("Session valid — attendance page loaded")
+            if reach_attendance():
+                log.info("Session valid — attendance page loaded")
+            else:
+                log.warning("Attendance page not ready — trying the punch anyway")
 
             # Idempotency guard: skip if already in the desired state.
             # Clocked-in  → primary button reads "Web Clock-out"
@@ -1925,7 +1950,7 @@ def run_punch(action, log_file, scheduled=False):
                 # Reload, re-check idempotency, and try once more before failing.
                 log.warning("Punch-%s button not found — reloading and retrying", action)
                 goto_resilient(page, ATTENDANCE_URL, log, settle_ms=0)
-                wait_for_attendance_ready(page, log)
+                reach_attendance()
                 if action == "in" and page.locator('text="Web Clock-out"').count() > 0:
                     log.info("Already clocked IN after reload — nothing to do")
                     log_history("in", "Already clocked in — no double-punch")

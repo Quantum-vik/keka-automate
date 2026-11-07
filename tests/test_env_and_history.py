@@ -87,3 +87,15 @@ def test_get_logger_survives_missing_stdout(tmp_path, monkeypatch):
     log = kc.get_logger(str(tmp_path / "run.log"))
     log.info("scheduled run")
     assert "scheduled run" in (tmp_path / "run.log").read_text(encoding="utf-8")
+
+
+def test_suite_never_touches_real_data_dir(tmp_path):
+    real = os.path.expanduser("~/.local/share/Auto-Keka/logs/auto-keka.log")
+    before = os.stat(real) if os.path.exists(real) else None
+    kc.log_step("x")
+    kc.log_history("info", "x")
+    assert kc.DATA_DIR.startswith(str(tmp_path))
+    assert kc.HISTORY_FILE.startswith(str(tmp_path)) and os.path.exists(kc.HISTORY_FILE)
+    if before:
+        after = os.stat(real)
+        assert (after.st_size, after.st_mtime_ns) == (before.st_size, before.st_mtime_ns)

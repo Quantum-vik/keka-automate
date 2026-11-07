@@ -65,6 +65,12 @@ def test_cron_punches_are_marked_scheduled(run_installer):
     assert "--scheduled" not in _jobs(table, "keka_check.py")[0]
 
 
+def test_cron_punches_get_the_gui_env(run_installer):
+    # Without D-Bus, a cron punch's failure pop-up (notify-send) never shows.
+    _, table = run_installer("KEKA_IN_TIME=09:00\nKEKA_OUT_TIME=18:00\n", "")
+    assert all("DBUS_SESSION_BUS_ADDRESS=" in l for l in _jobs(table, "keka_"))
+
+
 def test_reapply_replaces_instead_of_wiping(run_installer):
     r, table = run_installer("KEKA_IN_TIME=10:00\nKEKA_OUT_TIME=19:00\n", KEKA_JOBS)
     assert r.returncode == 0, r.stdout + r.stderr

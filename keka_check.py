@@ -26,7 +26,8 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import keka_common as kc
 
-BUFFER_DAYS = 1.5  # prompt this many days before the remember-cookie expires
+# Warn this many days before the remember-cookie expires — must outlast a slept-through weekend (Fri eve → Mon 09:00 ≈ 63h).
+BUFFER_DAYS = 3
 TITLE = "Keka Attendance"
 
 
@@ -141,6 +142,21 @@ def launch_setup(log):
 def main():
     log = kc.get_logger(kc.log_path("keka_reauth.log"))
     log.info("=== Keka reauth check ===")
+
+    # A clock-out missed past midnight is never punched late (Keka would record
+    # a false time), so remind once a day. A fix made directly in Keka never
+    # reaches our history, so stop after 3 days (covers Friday → Monday).
+    today = kc._now()
+    hist = kc.read_history()
+    day = kc.unclosed_workday(hist, today)
+    note = f"Reminded about the missing clock-out for {day}"
+    stamp = datetime.now().strftime("%Y-%m-%d")   # log_history's clock
+    if (day and (today - datetime.strptime(day, "%Y-%m-%d")).days <= 3
+            and not any(h.get("date") == stamp and h.get("msg") == note for h in hist)):
+        log.warning("No clock-out recorded for %s", day)
+        notify(f"No clock-out was recorded for {day} — open Keka and fix that day's "
+               "attendance by hand if you haven't already.")
+        kc.log_history("info", note)
 
     exp = remember_cookie_expiry()
     now = datetime.now().timestamp()

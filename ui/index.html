@@ -461,6 +461,12 @@
         <span class="banner-txt" id="offText">—</span>
       </div>
 
+      <!-- PUNCH-FAILURE BANNER (stays until a later punch succeeds) -->
+      <div id="failBanner" class="banner" style="display:none">
+        <span class="banner-ico">⚠️</span>
+        <span class="banner-txt" id="failText">—</span>
+      </div>
+
       <!-- HERO -->
       <div class="hero">
         <div class="hero-top">
@@ -873,7 +879,11 @@ function render() {
   else { const d = nextWorkday(sIn);   nextIsOut = false; target = d.getTime(); when = `${dayLabel(d)} · ${fmtSched(sIn)}`; }
   $("#nextDot").style.background = nextIsOut ? "var(--out)" : "var(--present)";
   setText("#nextLabel", nextIsOut ? "Auto clock-out" : "Auto clock-in");
-  setText("#nextTime", when);
+  // The login cookie dies ~16h after the last password login; flag it when
+  // that lands before the next punch (the punch will try to relogin itself).
+  const idExp = STATE.identityExpiresAt;
+  setText("#nextTime", idExp && now < idExp && idExp < target
+    ? `${when} · sign-in lapses ${fmtHM(new Date(idExp))}` : when);
   setText("#countdown", fmtCountdown(target - now));
 
   // session health card — driven by the real token/probe verdict, not a timer.
@@ -912,6 +922,7 @@ function render() {
   renderStats(STATE.stats);
   renderUpdateBanner();
   renderOffBanner();
+  renderFailBanner();
   renderPausePill();
   applyGates();
 }
@@ -984,6 +995,12 @@ function renderUpdateBanner(){
   } else {
     b.style.display = "none";
   }
+}
+
+function renderFailBanner(){
+  const f = STATE.lastFailure;
+  $("#failBanner").style.display = f ? "flex" : "none";
+  if (f) setText("#failText", `${f.date} ${f.time} · ${f.msg} — check Keka.`);
 }
 
 function renderOffBanner(){
@@ -1094,9 +1111,9 @@ document.querySelectorAll(".btn").forEach(b => b.addEventListener("click", async
 }));
 function afterPunch(res, action) {
   if (!hasBridge()) {                              // browser demo: mutate locally
-    if (action==="in")  { if (STATE.clockedIn) return pushActivity({time:hm(),msg:"Already clocked in — no double-punch",kind:"out"});
+    if (action==="in")  { if (STATE.clockedIn) return pushActivity({time:hm(),msg:"Already clocked in — no double-punch",kind:"info"});
                           STATE.clockedIn=true; STATE.clockInAt=vnow(); STATE.clockOutAt=null; pushActivity({time:hm(),msg:"Clocked in",kind:"in"}); }
-    else                { if (!STATE.clockedIn) return pushActivity({time:hm(),msg:"Already clocked out — no double-punch",kind:"out"});
+    else                { if (!STATE.clockedIn) return pushActivity({time:hm(),msg:"Already clocked out — no double-punch",kind:"info"});
                           STATE.clockedIn=false; STATE.clockOutAt=vnow(); pushActivity({time:hm(),msg:"Clocked out",kind:"out"}); }
     render(); return;
   }

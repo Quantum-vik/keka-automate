@@ -100,3 +100,39 @@ def test_frozen_watchdog_opens_the_app_not_keka_setup(monkeypatch):
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("ran keka_setup")))
     keka_check.launch_setup(logging.getLogger("test"))
     assert opened == [["/opt/Auto-Keka"]]
+
+
+def test_watchdog_reminds_about_a_missed_clock_out_for_three_days(monkeypatch):
+    from datetime import datetime
+    notes = []
+    monkeypatch.setattr(keka_check, "notify", notes.append)
+    monkeypatch.setattr(keka_check, "launch_setup", lambda log: None)
+    kc.log_history("info", "unrelated")
+    with open(kc.HISTORY_FILE, "a") as f:
+        f.write('{"date": "2026-09-18", "time": "09:00", "kind": "in", "msg": "Clocked in"}\n')
+    for now, expected in ((datetime(2026, 9, 21, 10), 1),     # Fri left open, Mon check
+                          (datetime(2026, 9, 22, 10), 0)):    # Tue: past the 3-day cap
+        notes.clear()
+        monkeypatch.setattr(kc, "_now", lambda: now)
+        keka_check.main()
+        assert len(notes) == expected and all("2026-09-18" in n for n in notes)
+
+
+def test_watchdog_reminds_about_a_missed_clock_out_once_a_day(monkeypatch):
+    from datetime import datetime
+    notes = []
+    monkeypatch.setattr(keka_check, "notify", notes.append)
+    monkeypatch.setattr(keka_check, "launch_setup", lambda log: None)
+    monkeypatch.setattr(kc, "_now", lambda: datetime(2026, 9, 21, 10))
+    with open(kc.HISTORY_FILE, "a") as f:
+        f.write('{"date": "2026-09-18", "time": "09:00", "kind": "in", "msg": "Clocked in"}\n')
+    keka_check.main()
+    keka_check.main()                                 # 6h later, same day
+    assert len(notes) == 1
+    # Yesterday's reminder doesn't count for today
+    with open(kc.HISTORY_FILE) as f:
+        old = f.read().replace(datetime.now().strftime("%Y-%m-%d"), "2000-01-01")
+    with open(kc.HISTORY_FILE, "w") as f:
+        f.write(old)
+    keka_check.main()
+    assert len(notes) == 2

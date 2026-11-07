@@ -2,20 +2,20 @@ import Foundation
 
 /// Mirrors the JSON returned by `GET /api/state` on the Python core.
 ///
-/// The Python side sends epoch **milliseconds** for timestamps and uses `0`
-/// (not null) to mean "never happened", so both are normalised here rather
-/// than leaking that convention into the views.
+/// The Python side sends epoch **milliseconds** for timestamps and `null` for
+/// what hasn't happened or isn't known yet (`clockOutAt` until today's
+/// clock-out, `sessionAlive` with no verdict), so those fields are optional.
 struct KekaState: Codable, Equatable {
     var licensed: Bool
     var licenseName: String
     var clockedIn: Bool
-    var clockInAt: Double
-    var clockOutAt: Double
+    var clockInAt: Double?
+    var clockOutAt: Double?
     var scheduleIn: String
     var scheduleOut: String
     var sessionDaysLeft: Int
-    var sessionAlive: Bool
-    var tokenExpiresAt: Double
+    var sessionAlive: Bool?
+    var tokenExpiresAt: Double?
     var week: [WeekDay]
     var activity: [ActivityEntry]
     var depsReady: Bool
@@ -59,16 +59,16 @@ struct KekaState: Codable, Equatable {
         return end.timeIntervalSince(start)
     }
 
-    private static func date(fromMillis ms: Double) -> Date? {
-        // Python sends 0 for "no punch recorded", which must not become 1970.
-        guard ms > 0 else { return nil }
+    private static func date(fromMillis ms: Double?) -> Date? {
+        // A 0 must not become 1970.
+        guard let ms = ms, ms > 0 else { return nil }
         return Date(timeIntervalSince1970: ms / 1000)
     }
 
     static let placeholder = KekaState(
         licensed: false, licenseName: "", clockedIn: false,
-        clockInAt: 0, clockOutAt: 0, scheduleIn: "--:--", scheduleOut: "--:--",
-        sessionDaysLeft: 0, sessionAlive: false, tokenExpiresAt: 0,
+        clockInAt: nil, clockOutAt: nil, scheduleIn: "--:--", scheduleOut: "--:--",
+        sessionDaysLeft: 0, sessionAlive: nil, tokenExpiresAt: nil,
         week: [], activity: [], depsReady: false, onboarded: false,
         config: Config(url: nil, email: nil)
     )

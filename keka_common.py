@@ -23,6 +23,7 @@ import shutil
 import base64
 import logging
 import tempfile
+import threading
 import shlex
 import subprocess
 from datetime import datetime, timedelta
@@ -85,7 +86,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Single source of truth for the app version. release.yml reads THIS for the
 # Nuitka product-version, and the in-app update check compares it against the
 # latest GitHub release tag — so bumping this one line is what a release needs.
-APP_VERSION = "1.0.19"
+APP_VERSION = "1.0.20"
 GITHUB_REPO = "Quantum-vik/keka-automate"
 
 # True when running as a Nuitka-compiled binary (no source tree, no venv).
@@ -1273,12 +1274,12 @@ def read_history(n=200):
     return out[-n:]
 
 
-def last_punch_failure(hist):
+def last_punch_failure(hist, dismissed_ts=0):
     """The newest punch_failed() entry (or skipped clock-out) in hist
     (oldest→newest), unless a real punch of the same action came after it — the
     UI keeps it on screen until then, since the desktop pop-up is best-effort
     and easy to miss (KNOWN-ISSUES #11). Today's clock-in doesn't fix
-    yesterday's clock-out."""
+    yesterday's clock-out. None once the user dismissed it (ts <= dismissed_ts)."""
     punched = set()
     for h in reversed(hist):
         msg = h.get("msg") or ""
@@ -1287,8 +1288,33 @@ def last_punch_failure(hist):
         elif ((msg.startswith("Auto clock-") and "FAILED —" in msg)
               or msg.startswith("Missed auto clock-out not caught up")):
             if ("in" if msg.startswith("Auto clock-in") else "out") not in punched:
+                if dismissed_ts and h.get("ts", 0) <= dismissed_ts:
+                    return None
                 return h
     return None
+
+
+def dismissed_failure_ts():
+    """History ts of the newest failure the user dismissed from the banner; 0 if none."""
+    try:
+        with open(os.path.join(DATA_DIR, "failure_dismissed"), encoding="utf-8") as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return 0
+
+
+_DISMISS_LOCK = threading.Lock()
+
+
+def dismiss_failure(ts):
+    # max(): a stale page dismissing an older failure must not resurrect a newer one.
+    # Locked so two dismissals (desk + phone) can't interleave read and write.
+    p = os.path.join(DATA_DIR, "failure_dismissed")
+    with _DISMISS_LOCK:
+        ts = max(int(ts), dismissed_failure_ts())
+        with open(p + ".tmp", "w", encoding="utf-8") as f:
+            f.write(str(ts))
+        os.replace(p + ".tmp", p)
 
 
 # ── Time off: holidays / planned leave — auto-punch skips these dates ─────────

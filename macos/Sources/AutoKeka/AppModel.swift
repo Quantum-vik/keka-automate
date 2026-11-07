@@ -147,26 +147,35 @@ final class AppModel: ObservableObject {
         run("save_creds", body: payload)
     }
 
-    func applySchedule(_ payload: [String: Any]) {
-        run("apply_schedule", body: payload)
+    /// Awaitable so Settings can confirm only once the core said ok.
+    @discardableResult
+    func applySchedule(_ payload: [String: Any]) async -> Bool {
+        await perform("apply_schedule", body: payload)
     }
 
     private func run(_ action: String, body: [String: Any]? = nil) {
-        guard let client, busyAction == nil else { return }
+        Task { await self.perform(action, body: body) }
+    }
+
+    /// True only when the core accepted the action; failures land in errorMessage.
+    @discardableResult
+    private func perform(_ action: String, body: [String: Any]? = nil) async -> Bool {
+        guard let client, busyAction == nil else { return false }
         busyAction = action
         errorMessage = nil
-        Task { [weak self] in
-            defer { Task { @MainActor in self?.busyAction = nil } }
-            do {
-                let result = try await client.post(action, body: body)
-                if let ok = result.ok, !ok {
-                    await MainActor.run { self?.errorMessage = result.message ?? "Action failed." }
-                }
-                // The core pushes a fresh state over SSE after every action, so
-                // there is deliberately no refetch here.
-            } catch {
-                await MainActor.run { self?.errorMessage = error.localizedDescription }
+        defer { busyAction = nil }
+        do {
+            let result = try await client.post(action, body: body)
+            if let ok = result.ok, !ok {
+                errorMessage = result.message ?? "Action failed."
+                return false
             }
+            // The core pushes a fresh state over SSE after every action, so
+            // there is deliberately no refetch here.
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
         }
     }
 

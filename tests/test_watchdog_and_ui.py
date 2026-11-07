@@ -170,3 +170,85 @@ def test_reauth_warning_silent_on_days_without_a_clock_out(monkeypatch):
     fri = datetime(2026, 11, 6, 14, 0)
     kc.save_timeoff([{"date": "2026-11-06", "kind": "holiday", "note": ""}])
     assert keka_ui.reauth_warning("in", fri, fri.replace(hour=20)) is None
+
+
+# ── failure banner dismissal ─────────────────────────────────────────────────
+def _fail(ts):
+    return {"ts": ts, "time": "20:04", "date": "2026-11-06", "kind": "info",
+            "msg": "Auto clock-out FAILED — punch button not found"}
+
+
+def test_get_state_hides_dismissed_failure_until_a_newer_one(monkeypatch):
+    assert _state_with(monkeypatch, [_fail(100)], "out")["lastFailure"]["ts"] == 100
+    kc.dismiss_failure(100)
+    assert _state_with(monkeypatch, [_fail(100)], "out")["lastFailure"] is None
+    assert _state_with(monkeypatch, [_fail(100), _fail(101)], "out")["lastFailure"]["ts"] == 101
+
+
+def test_dismiss_failure_only_accepts_the_current_failure(monkeypatch):
+    now_ms = int(time.time() * 1000)
+    monkeypatch.setattr(kc, "read_history", lambda n=200: [_fail(now_ms)])
+    me = keka_ui.Backend.__new__(keka_ui.Backend)
+    me.push_state = lambda: None
+    for obj in (None, {}, {"ts": 0}, {"ts": -5}, {"ts": "x"}, {"ts": True},
+                {"ts": now_ms + 86400_000}, {"ts": float("inf")}, {"ts": 10**18},
+                {"ts": now_ms - 1}):                       # not the failure on screen
+        assert me.dismiss_failure(obj) == {"ok": False, "message": "Nothing to dismiss"}, obj
+    assert not kc.os.path.exists(kc.os.path.join(kc.DATA_DIR, "failure_dismissed"))
+    assert me.dismiss_failure({"ts": now_ms}) == {"ok": True}
+    assert kc.dismissed_failure_ts() == now_ms
+    assert me.dismiss_failure({"ts": now_ms}) == {"ok": True}    # idempotent: desk + phone both dismiss
+
+
+def test_dismiss_failure_with_no_failure_writes_nothing(monkeypatch):
+    monkeypatch.setattr(kc, "read_history", lambda n=200: [])
+    me = keka_ui.Backend.__new__(keka_ui.Backend)
+    me.push_state = lambda: None
+    assert me.dismiss_failure({"ts": 1})["ok"] is False
+    assert kc.dismissed_failure_ts() == 0
+
+
+def test_dismiss_failure_is_wired_into_http_and_shim():
+    import inspect
+    assert "dismiss_failure:(o)=>post('/api/dismiss_failure',o)" in keka_ui._SHIM
+    assert '"/api/dismiss_failure": lambda: backend.dismiss_failure(body)' in inspect.getsource(keka_ui._serve_http)
+    assert keka_ui.Api.dismiss_failure
+
+
+# ── apply_schedule: payload keys and validation ─────────────────────────────
+def _schedule(monkeypatch, obj):
+    calls = []
+    monkeypatch.setattr(kc, "FROZEN", True)
+    monkeypatch.setattr(kc, "install_schedule_native", lambda i, o: calls.append((i, o)) or True)
+    monkeypatch.setattr(kc, "linger_warning", lambda: None)
+    me = keka_ui.Backend.__new__(keka_ui.Backend)
+    me.push_state = lambda: None
+    return me.apply_schedule(obj), calls
+
+
+def test_apply_schedule_accepts_legacy_in_out(monkeypatch):
+    res, calls = _schedule(monkeypatch, {"in": "10:00", "out": "19:00"})
+    env = kc._load_env()
+    assert res["ok"] and calls == [("10:00", "19:00")]
+    assert env["KEKA_IN_TIME"] == "10:00" and env["KEKA_OUT_TIME"] == "19:00"
+
+
+def test_apply_schedule_accepts_in_time_out_time(monkeypatch):
+    res, calls = _schedule(monkeypatch, {"inTime": "08:30", "outTime": "17:30"})
+    assert res["ok"] and calls == [("08:30", "17:30")]
+    assert kc._load_env()["KEKA_IN_TIME"] == "08:30"
+
+
+def test_apply_schedule_accepts_short_hour_and_padding(monkeypatch):
+    res, calls = _schedule(monkeypatch, {"inTime": "9:00", "outTime": " 18:00 "})
+    assert res["ok"] and calls == [("9:00", "18:00")]
+
+
+def test_apply_schedule_rejects_missing_or_bad_times(monkeypatch):
+    for obj in ({}, {"inTime": "25:99", "outTime": "18:00"}, {"inTime": "24:00", "outTime": "18:00"},
+                {"inTime": 900, "outTime": 1800},                       # numbers: no AttributeError
+                {"inTime": "\u0660\u0669:\u0660\u0660", "outTime": "18:00"}):   # Arabic-Indic 09:00
+        res, calls = _schedule(monkeypatch, obj)
+        assert res == {"ok": False, "message": "Use 24-hour HH:MM, e.g. 09:00 and 18:00."}
+        assert calls == []
+        assert not kc.os.path.exists(kc.ENV_FILE)

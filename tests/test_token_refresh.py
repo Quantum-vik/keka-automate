@@ -141,3 +141,33 @@ def test_last_punch_failure_counts_a_missed_clock_out():
     hist = [{"kind": "info", "msg": "Missed auto clock-out not caught up — it's the weekend"}]
     assert kc.last_punch_failure(hist) is hist[0]
     assert kc.last_punch_failure(hist + [{"kind": "out", "msg": "Clocked out"}]) is None
+
+
+def test_last_punch_failure_hidden_once_dismissed():
+    hist = [dict(_fail_entry(), ts=100)]
+    assert kc.last_punch_failure(hist, 100) is None
+    assert kc.last_punch_failure(hist, 99) is hist[0]
+    newer = [dict(_fail_entry(), ts=101)]
+    assert kc.last_punch_failure(newer, 100) is newer[0]
+    assert kc.last_punch_failure(hist, 0) is hist[0]
+    no_ts = [_fail_entry()]                            # fixtures without ts still return
+    assert kc.last_punch_failure(no_ts) is no_ts[0]
+
+
+def test_dismiss_failure_round_trip_keeps_the_max():
+    assert kc.dismissed_failure_ts() == 0
+    kc.dismiss_failure(200)
+    assert kc.dismissed_failure_ts() == 200
+    kc.dismiss_failure(150)                            # a stale page can't un-dismiss
+    assert kc.dismissed_failure_ts() == 200
+
+
+def test_dismissed_failure_ts_corrupt_or_partial_file_is_zero():
+    p = kc.os.path.join(kc.DATA_DIR, "failure_dismissed")
+    for junk in ("not a number", "", "1.7e"):                # garbage, empty, a half-written value
+        with open(p, "w") as f:
+            f.write(junk)
+        assert kc.dismissed_failure_ts() == 0
+    kc.dismiss_failure(300)                                  # a corrupt file is overwritten cleanly
+    assert kc.dismissed_failure_ts() == 300
+    assert not kc.os.path.exists(p + ".tmp")

@@ -60,6 +60,7 @@ Everything you do is recorded in logs/history.jsonl (previous-session info).
 #    nuitka-project: --noinclude-data-files=girepository
 
 import os
+import re
 import sys
 import json
 import time
@@ -281,7 +282,7 @@ class Backend:
             "sessionAlive": alive,
             "tokenExpiresAt": health["token_exp"] * 1000 if health["token_exp"] else None,
             "identityExpiresAt": health["identity_exp"] * 1000 if health["identity_exp"] else None,
-            "lastFailure": kc.last_punch_failure(hist),
+            "lastFailure": kc.last_punch_failure(hist, kc.dismissed_failure_ts()),
             # weekday before today with an in but no out; names the day when Keka
             # still says "in" with no clock-in today
             "unclosedDay": recent_unclosed_day(hist),
@@ -439,7 +440,12 @@ class Backend:
 
     def apply_schedule(self, obj):
         obj = obj or {}
-        it, ot = (obj.get("inTime") or "").strip(), (obj.get("outTime") or "").strip()
+        # in/out: what already-shipped Mac clients send.
+        it = str(obj.get("inTime") or obj.get("in") or "").strip()
+        ot = str(obj.get("outTime") or obj.get("out") or "").strip()
+        # [0-9], not \d: \d also matches non-ASCII digits like "٠٩:٠٠".
+        if not all(re.fullmatch(r"([01]?[0-9]|2[0-3]):[0-5][0-9]", t) for t in (it, ot)):
+            return {"ok": False, "message": "Use 24-hour HH:MM, e.g. 09:00 and 18:00."}
         kc.update_env({"KEKA_IN_TIME": it, "KEKA_OUT_TIME": ot})
         if kc.FROZEN:
             # Compiled build: schedule natively — jobs call this binary --punch.
@@ -507,6 +513,17 @@ class Backend:
         kc.log_history("info", "Automation paused" if paused else "Automation resumed")
         self.push_state()
         return {"ok": True, "paused": kc.is_paused()}
+
+    def dismiss_failure(self, obj):
+        # Only the failure on screen can be dismissed: any other ts (a bool, a
+        # far-future number) would, through max(), silence every later failure.
+        ts = (obj or {}).get("ts")
+        cur = kc.last_punch_failure(kc.read_history(200))
+        if isinstance(ts, bool) or not cur or not cur.get("ts") or ts != cur["ts"]:
+            return {"ok": False, "message": "Nothing to dismiss"}
+        kc.dismiss_failure(cur["ts"])
+        self.push_state()
+        return {"ok": True}
 
     # ── software update ──────────────────────────────────────────────────────
     def check_update(self):
@@ -746,6 +763,7 @@ class Api:
     def add_timeoff(self, obj): return self._b.add_timeoff(obj)
     def remove_timeoff(self, obj): return self._b.remove_timeoff(obj)
     def set_pause(self, obj):   return self._b.set_pause(obj)
+    def dismiss_failure(self, obj): return self._b.dismiss_failure(obj)
     def export_csv(self):       return self._b.export_csv()
     def check_update(self):     return self._b.check_update()
     def open_release(self, obj=None): return self._b.open_release(obj)
@@ -898,6 +916,7 @@ _SHIM = """
     activate_license:(k)=>post('/api/activate_license',{key:k}), remote_info:()=>post('/api/remote_info'),
     get_timeoff:()=>post('/api/get_timeoff'), add_timeoff:(o)=>post('/api/add_timeoff',o),
     remove_timeoff:(o)=>post('/api/remove_timeoff',o), set_pause:(o)=>post('/api/set_pause',o),
+    dismiss_failure:(o)=>post('/api/dismiss_failure',o),
     export_csv:()=>post('/api/export_csv'), check_update:()=>post('/api/check_update'),
     open_release:(o)=>post('/api/open_release',o)}};
   try{const es=new EventSource('/events');es.onmessage=(e)=>{const m=JSON.parse(e.data),K=window.KekaUI||{};
@@ -1001,6 +1020,7 @@ def _serve_http(backend, host, port, token):
                       "/api/add_timeoff": lambda: backend.add_timeoff(body),
                       "/api/remove_timeoff": lambda: backend.remove_timeoff(body),
                       "/api/set_pause": lambda: backend.set_pause(body),
+                      "/api/dismiss_failure": lambda: backend.dismiss_failure(body),
                       "/api/export_csv": lambda: backend.export_csv(),
                       "/api/check_update": lambda: backend.check_update(),
                       "/api/open_release": lambda: backend.open_release(body)}

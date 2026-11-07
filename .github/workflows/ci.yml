@@ -142,3 +142,19 @@ jobs:
       - name: setup.ps1 -Help runs
         shell: pwsh
         run: ./setup.ps1 -Help
+
+  # ── Compile the native macOS client ──────────────────────────────────────────
+  # Only the `swift build` step of macos/build-app.sh (no core, no bundle, no
+  # signing, no secrets): the Swift client has no other compile check before a
+  # release tag, and there is no Swift toolchain on the Linux dev boxes.
+  macos-client:
+    name: macos-client (swift build)
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: swift build (release, as build-app.sh --release)
+        working-directory: macos
+        run: swift build -c release

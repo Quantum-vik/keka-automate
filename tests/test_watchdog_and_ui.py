@@ -1,6 +1,7 @@
 """keka_check helpers (reauth watchdog) and keka_ui pure helpers."""
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import keka_check as kck
 import keka_common as kc
@@ -77,6 +78,75 @@ def test_build_week_places_history_on_correct_day():
         assert len(marked) == 1 and marked[0]["today"]
     else:                                  # weekend: date not in Mon–Fri grid
         assert marked == []
+
+
+# Thu 11-05 in/out, Fri 11-06 in only (auto clock-out failed)
+_MISSED_FRI = [_entry("2026-11-05", "11:00", "in"), _entry("2026-11-05", "20:00", "out"),
+               _entry("2026-11-06", "11:00", "in")]
+
+
+def test_build_week_flags_past_day_without_clock_out():
+    week = keka_ui.Backend._build_week(None, _MISSED_FRI, now=datetime(2026, 11, 7, 23, 0))
+    by = {d["day"]: d for d in week}
+    assert by["Fri"]["open"] and by["Fri"]["in"] == "11:00" and by["Fri"]["out"] == "—"
+    assert not by["Thu"]["open"]
+    assert not any(d["open"] for d in week if d["day"] not in ("Fri",))   # empty days aren't open
+
+
+def test_build_week_never_flags_today_in_progress():
+    week = keka_ui.Backend._build_week(None, _MISSED_FRI, now=datetime(2026, 11, 6, 15, 0))
+    fri = week[4]
+    assert fri["today"] and fri["in"] == "11:00" and not fri["open"]
+
+
+def test_build_week_flags_in_out_in_and_out_before_in():
+    hist = [_entry("2026-11-04", "09:00", "in"), _entry("2026-11-04", "13:00", "out"),
+            _entry("2026-11-04", "14:00", "in"),                       # never clocked out again
+            _entry("2026-11-05", "11:00", "in"), _entry("2026-11-05", "11:00", "out")]   # out <= in
+    week = keka_ui.Backend._build_week(None, hist, now=datetime(2026, 11, 7, 23, 0))
+    assert week[2]["open"] and week[3]["open"]
+
+
+def _state_with(monkeypatch, hist, status):
+    """Run the real get_state on a Backend built without __init__ (that starts
+    the probe threads); only the instance state get_state reads is set."""
+    monkeypatch.setattr(kc, "read_history", lambda n=200: hist)
+    monkeypatch.setattr(kc, "session_health", lambda: {
+        "remember_exp": None, "alive": None, "token_exp": None, "identity_exp": None})
+    monkeypatch.setattr(kc, "deps_ready", lambda: True)
+    monkeypatch.setattr(keka_ui.lic, "license_info", lambda: None)
+    monkeypatch.setattr(keka_ui.lic, "machine_id", lambda: "x")
+    me = keka_ui.Backend.__new__(keka_ui.Backend)
+    me._status, me._alive, me._update = status, None, None
+    me._rate_limited = me._needs_reauth = False
+    return me.get_state()
+
+
+def _last_weekday(now, back=1):
+    d = now - timedelta(days=back)
+    while d.weekday() > 4:
+        d -= timedelta(days=1)
+    return d
+
+
+def test_get_state_names_unclosed_day(monkeypatch):
+    day = _last_weekday(datetime.now()).strftime("%Y-%m-%d")
+    st = _state_with(monkeypatch, [_entry(day, "11:00", "in")], "in")
+    assert st["unclosedDay"] == day
+    assert st["clockedIn"] and st["clockInAt"] is None
+
+
+def test_get_state_manual_clock_in_is_not_unclosed(monkeypatch):
+    # clocked in from Keka's own app: our run logs only an info line, no "in"
+    today = datetime.now().strftime("%Y-%m-%d")
+    st = _state_with(monkeypatch, [_entry(today, "11:00", "info")], "in")
+    assert st["clockedIn"] and st["clockInAt"] is None and st["unclosedDay"] is None
+
+
+def test_recent_unclosed_day_caps_at_three_days():
+    hist = [_entry("2026-11-06", "11:00", "in")]                       # Friday
+    assert keka_ui.recent_unclosed_day(hist, datetime(2026, 11, 9, 23, 0)) == "2026-11-06"   # Mon
+    assert keka_ui.recent_unclosed_day(hist, datetime(2026, 11, 10, 9, 0)) is None          # Tue
 
 
 # ── reauth warning (KNOWN-ISSUES #5) ─────────────────────────────────────────

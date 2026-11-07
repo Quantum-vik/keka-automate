@@ -92,6 +92,16 @@ OTP_WAIT_SECS = 300
 LIVE_PROBE_SECS = 900   # 15 minutes
 
 
+def recent_unclosed_day(hist, now=None):
+    """kc.unclosed_workday, but only within keka_check's 3-day reminder window:
+    a fix made directly in Keka never reaches our history, so older days go quiet."""
+    now = now or kc._now()
+    day = kc.unclosed_workday(hist, now)
+    if day and (now - datetime.strptime(day, "%Y-%m-%d")).days <= 3:
+        return day
+    return None
+
+
 def reauth_warning(status, now, out_due):
     """The pop-up to raise when the session goes dead while clocked in and
     before today's auto clock-out, else None. The punch can relogin on its own
@@ -272,6 +282,9 @@ class Backend:
             "tokenExpiresAt": health["token_exp"] * 1000 if health["token_exp"] else None,
             "identityExpiresAt": health["identity_exp"] * 1000 if health["identity_exp"] else None,
             "lastFailure": kc.last_punch_failure(hist),
+            # weekday before today with an in but no out; names the day when Keka
+            # still says "in" with no clock-in today
+            "unclosedDay": recent_unclosed_day(hist),
             "week": self._build_week(hist),
             "activity": activity,
             "depsReady": kc.deps_ready(),
@@ -549,28 +562,30 @@ class Backend:
                 cout = h["ts"]
         return cin, cout
 
-    def _build_week(self, hist):
-        now = datetime.now()
+    def _build_week(self, hist, now=None):
+        now = now or datetime.now()
         monday_ord = now.toordinal() - now.weekday()
         names = ["Mon", "Tue", "Wed", "Thu", "Fri"]
-        by_date = {}
+        by_date = kc.day_punches(hist)
+        last = {}   # date -> kind of that day's final punch
         for h in hist:
-            d = h.get("date")
-            if not d:
-                continue
-            slot = by_date.setdefault(d, {"in": None, "out": None})
-            if h["kind"] == "in" and slot["in"] is None:
-                slot["in"] = h["time"]
-            if h["kind"] == "out":
-                slot["out"] = h["time"]
+            if h.get("date") and h.get("kind") in ("in", "out"):
+                last[h["date"]] = h["kind"]
         week = []
         for i, name in enumerate(names):
             day = datetime.fromordinal(monday_ord + i)
             dstr = day.strftime("%Y-%m-%d")
             slot = by_date.get(dstr, {})
+            cin, cout = kc._hhmm_to_min(slot.get("in")), kc._hhmm_to_min(slot.get("out"))
+            # Open = a past day clocked in but never out: no out, the day ends on an
+            # "in" (in-out-in), or the out isn't after the in. Known limit: a clock-out
+            # after midnight is logged on the next date, so its own day still shows open.
+            is_open = (day.date() < now.date() and cin is not None
+                       and (last.get(dstr) == "in" or cout is None or cout <= cin))
             week.append({"day": name, "date": f"{day.month}/{day.day}", "iso": dstr,
                          "in": slot.get("in") or "—", "out": slot.get("out") or "—",
-                         "today": day.date() == now.date(), "dim": day.date() > now.date()})
+                         "today": day.date() == now.date(), "dim": day.date() > now.date(),
+                         "open": is_open})
         return week
 
     def _run_stream(self, cmd, env=None):

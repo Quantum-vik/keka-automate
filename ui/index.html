@@ -115,7 +115,7 @@
   .hero-date { display:block; font-size:13px; font-weight:600; color:var(--ink-2); margin-bottom:4px; }
   .hero-status { display:flex; align-items:center; gap:12px; font-family:var(--f-num); font-stretch:condensed;
     font-size:40px; line-height:1.05; font-weight:700; letter-spacing:-.01em; }
-  /* state mark: a cap-height bar. solid = live, outline = out, dashed = pending, red = needs you */
+  /* state mark: a cap-height bar. blue = live, muted = out, dashed = pending, amber = trouble, red = needs you */
   .hero-status .dot { position:relative; width:8px; height:.72em; border-radius:2px; flex-shrink:0; background:var(--ink-3); }
   .hero .sub { margin-top:6px; color:var(--ink-2); }
   .worked { display:flex; align-items:baseline; gap:8px; margin-top:10px; color:var(--ink-2); }
@@ -130,11 +130,10 @@
   /* the live mark breathes (opacity only: one small layer, paused while unfocused) */
   .hero[data-state="live"] .dot { animation:beat 2.4s ease-in-out infinite; }
   @keyframes beat { 0%, 100% { opacity:1; } 50% { opacity:.35; } }
-  .hero[data-state="out"] .dot { background:none; box-shadow:inset 0 0 0 2px var(--ink-2); }
   .hero[data-state="reconnecting"] .dot { background:none; border:2px dashed var(--amber-mark); }
-  .hero[data-state="reconnecting"] .timer, .hero[data-state="expired"] .timer { color:var(--ink-3); }
-  .hero[data-state="overdue"] .dot, .hero[data-state="overdue"] .rail > i { background:var(--amber-mark); }
-  .hero[data-state="overdue"] .sub { color:var(--amber); font-weight:600; }
+  .hero[data-state="reconnecting"] .timer, .hero[data-state="expired"] .timer, .hero[data-state="carried"] .timer { color:var(--ink-3); }
+  .hero[data-state="overdue"] .dot, .hero[data-state="overdue"] .rail > i, .hero[data-state="carried"] .dot { background:var(--amber-mark); }
+  .hero[data-state="overdue"] .sub, .hero[data-state="carried"] .sub { color:var(--amber); font-weight:600; }
   .hero[data-state="expired"] .dot { background:var(--red); }
   .hero[data-state="expired"] .txt { color:var(--red); }
   .hero[data-state="expired"] .rail > i { background:var(--red); opacity:.5; }
@@ -207,6 +206,8 @@
   .day.dim .io { color:var(--ink-3); }
   .day .note { font-weight:600; }
   .day .note.wfh { color:var(--ink-2); }
+  /* a past day with no clock-out: the note sits where its worked hours would be */
+  .day .note.open { display:flex; align-items:center; min-height:24px; white-space:normal; color:var(--amber); }
   .stats { display:flex; flex-wrap:wrap; gap:4px 22px; margin-top:14px; color:var(--ink-2); }
   .stats b { font-family:var(--f-num); font-stretch:condensed; font-variant-numeric:tabular-nums; font-size:18px; font-weight:700; color:var(--ink); margin-right:4px; }
   .stats .warn b { color:var(--amber); }
@@ -215,7 +216,7 @@
   /* ── activity ─────────────────────────────────────────────────────────── */
   .feed { display:flex; flex-direction:column; max-height:206px; overflow-y:auto; border-top:1px solid var(--rule); }
   .feed .item { display:flex; align-items:center; gap:12px; padding:7px 0; border-bottom:1px solid var(--rule); }
-  .feed .item .t { width:52px; flex-shrink:0; font-size:13px; color:var(--ink-2); font-variant-numeric:tabular-nums; }
+  .feed .item .t { min-width:136px; flex-shrink:0; white-space:nowrap; font-size:13px; color:var(--ink-2); font-variant-numeric:tabular-nums; }
   .feed .item i { width:8px; height:8px; border-radius:50%; flex-shrink:0; box-shadow:inset 0 0 0 1.5px var(--ink-3); }
   .feed .item.k-in i { background:var(--blue); box-shadow:none; }
   .feed .item.k-out i { background:var(--ink-2); box-shadow:none; }
@@ -374,6 +375,9 @@
     .day .dt { font-size:26px; min-width:36px; height:36px; margin-left:-5px; }
     .day .dur { font-size:15px; }
     .day .io { font-size:11.5px; }
+    /* feed: the day · time label takes its own line above the message */
+    .feed .item { flex-wrap:wrap; row-gap:1px; }
+    .feed .item .t { width:100%; }
     /* 16px stops iOS Safari from auto-zooming on focus */
     .field input, .wfield input, #otp input, #licKey, .tf-select { font-size:16px; }
     #settings { padding:12px; }
@@ -712,6 +716,7 @@ const MOCK = {
   clockedIn: true,
   clockInAt:  todayAt(9, 2).getTime(),   // epoch ms
   clockOutAt: null,                       // epoch ms | null
+  unclosedDay: null,                      // "YYYY-MM-DD": weekday before today with an in, no out
   scheduleIn:  "09:00",
   scheduleOut: "18:00",
   sessionDaysLeft: 9,                     // from Identity.TwoFactorRememberMe cookie
@@ -720,9 +725,12 @@ const MOCK = {
     // filled by buildMockWeek() below
   ],
   activity: [
-    { time: "09:02", msg: "Auto clock-in succeeded",        kind: "in"  },
-    { time: "08:59", msg: "Session valid — device pass OK",  kind: "info"},
-    { time: "Mon",   msg: "Device pass renewed for 14 days", kind: "info"},
+    { time: "09:02", date: isoAgo(0), msg: "Auto clock-in succeeded",        kind: "in"  },
+    { time: "08:59", date: isoAgo(0), msg: "Session valid — device pass OK",  kind: "info"},
+    { time: "18:01", date: isoAgo(1), msg: "Auto clock-out succeeded",       kind: "out" },
+    { time: "09:00", date: isoAgo(1), msg: "Auto clock-in succeeded",        kind: "in"  },
+    { time: "09:30", date: isoAgo(3), msg: `Reminded about the missing clock-out for ${isoAgo(4)}`, kind: "info"},
+    { time: "10:15", date: isoAgo(5), msg: "Device pass renewed for 14 days", kind: "info"},
   ],
   paused: false,
   timeoff: [],   // filled by buildMockTimeoff() below
@@ -802,7 +810,8 @@ function render() {
   const sOut = STATE.scheduleOut || "18:00";
   const startIn = schedAt(sIn);
   const cOut    = schedAt(sOut);
-  const cIn  = STATE.clockInAt || startIn;
+  // Real punches only (null when none today); the schedule never stands in for one.
+  const cIn = STATE.clockInAt, cOutAt = STATE.clockOutAt;
 
   // Session health verdict from the backend: true = verified alive (live probe
   // or an unexpired token), false = expired, null/undefined = not yet known.
@@ -815,6 +824,12 @@ function render() {
   const reconnecting = notAlive && !needsReauth;
   const dead = notAlive;             // timer/live still gate on "not verified alive"
   const live = clockedIn && !dead;   // "clocked in" is only trustworthy while the session is
+  // Keka says "in" with no clock-in recorded today. Carried over from a missed clock-out
+  // only when a recent weekday was left open; otherwise it was punched outside
+  // Auto-Keka (Keka's app or site) and the time simply isn't known here.
+  const carried = live && !cIn && !!STATE.unclosedDay;
+  // an out at or before the in (yesterday's session, clocked out after midnight) isn't today's
+  const outAfterIn = !!cOutAt && cOutAt > (cIn || 0);
 
   // next scheduled — uses your saved times; past targets roll to the next workday.
   // Paused: nothing fires. Time off today: today's punches are skipped.
@@ -823,31 +838,40 @@ function render() {
   const dow = new Date(now).getDay(), punchesToday = dow > 0 && dow < 6 && !STATE.todayOff;
   let nextIsOut, target, when, overdue = false;
   if (live && now < cOut && punchesToday) { nextIsOut = true;  target = cOut;    when = `Today, ${fmtSched(sOut)}`; }
-  else if (live && punchesToday && !STATE.clockOutAt) { nextIsOut = true;  target = cOut;    when = `Overdue, was ${fmtSched(sOut)}`; overdue = true; }
+  else if (live && !carried && punchesToday && !outAfterIn) { nextIsOut = true;  target = cOut;    when = `Overdue, was ${fmtSched(sOut)}`; overdue = true; }
   else if (now < startIn && punchesToday) { nextIsOut = false; target = startIn; when = `Today, ${fmtSched(sIn)}`; }
   else { const d = nextWorkday(sIn);   nextIsOut = false; target = d.getTime(); when = `${dayLabel(d)}, ${fmtSched(sIn)}`; }
   if (STATE.paused) overdue = false;
 
   // hero — the mark, rail colour and pulse all hang off data-state (CSS)
   setAttr("#hero", "data-state", needsReauth ? "expired" : reconnecting ? "reconnecting"
-                                : overdue ? "overdue" : live ? "live" : "out");
+                                : overdue ? "overdue" : carried ? "carried" : live ? "live" : "out");
   setText("#statusText", needsReauth ? "Session expired"
                                : reconnecting ? "Reconnecting…"
                                : clockedIn ? "Clocked in" : "Clocked out");
   setText("#dateText", new Date(now).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"}));
-  // On a dead session the timer must FREEZE (we can't know the real state), not keep counting.
-  const worked = (live ? now : (STATE.clockOutAt || Math.min(now, cOut))) - cIn;
-  setText("#timer", fmtDur(worked));
+  // Worked time runs from a real clock-in only: to now while live, else to the real
+  // clock-out. On a dead session we can't see Keka, so it runs on only up to the
+  // scheduled clock-out and stops there.
+  const workEnd = !cIn ? null : live ? now : outAfterIn ? cOutAt : clockedIn ? Math.min(now, cOut) : null;
+  const unknownStart = live && !cIn && !carried;   // clocked in outside Auto-Keka
+  setText("#timer", workEnd ? fmtDur(workEnd - cIn) : unknownStart ? "--:--:--" : fmtDur(0));
+  setStyle("#timer", "color", unknownStart ? "var(--ink-3)" : "");
   setText("#punchLine", needsReauth
     ? "Keka signed this device out. Use “Sign in again” under the device pass."
     : reconnecting
     ? "Signing back in to Keka automatically. Nothing to do."
     : overdue
-    ? `Since ${fmtHM(new Date(cIn))}. The ${fmtSched(sOut)} auto clock-out hasn't happened. Clock out now if you're done.`
+    ? `${cIn ? `Since ${fmtHM(new Date(cIn))}. ` : ""}The ${fmtSched(sOut)} auto clock-out hasn't happened. Clock out now if you're done.`
+    : carried
+    ? `Still clocked in from ${dayName(STATE.unclosedDay)}. Clock out in Keka if you're done.`
     : clockedIn
-    ? `Since ${fmtHM(new Date(cIn))}, by automation`
-    : `At ${fmtHM(new Date(STATE.clockOutAt||cOut))}, after ${fmtDur((STATE.clockOutAt||cOut)-cIn)}`);
-  setStyle("#workBar", "width", (live ? clamp((now-startIn)/(cOut-startIn)*100,0,100) : 100).toFixed(1) + "%");
+    ? (cIn ? `Since ${fmtHM(new Date(cIn))}, by automation` : "Clock-in time not recorded here")
+    : outAfterIn
+    ? `At ${fmtHM(new Date(cOutAt))}${cIn ? `, after ${fmtDur(cOutAt - cIn)}` : ""}`
+    : cIn ? `In at ${fmtHM(new Date(cIn))}, no clock-out recorded` : "No punches today");
+  setStyle("#workBar", "width", (workEnd ? clamp((workEnd-startIn)/(cOut-startIn)*100,0,100) : 0).toFixed(1) + "%");
+  setStyle("#workBar", "visibility", workEnd ? "" : "hidden");   // no end tick on an empty rail
   setText("#inLabel", fmtSched(sIn));
   setText("#outLabel", fmtSched(sOut));
 
@@ -896,7 +920,9 @@ function render() {
   outBtn.classList.toggle("done", !clockedIn && !dead);
   outBtn.classList.toggle("urge", overdue);
   setAttr('[data-action="clockIn"]',  "title", live ? "Already clocked in" : "Clock in now");
-  setAttr('[data-action="clockOut"]', "title", (!clockedIn && !dead) ? "Already clocked out" : "Clock out now");
+  setAttr('[data-action="clockOut"]', "title", (!clockedIn && !dead) ? "Already clocked out"
+    : carried ? `Records the clock-out in Keka now, closing the session open since ${dayName(STATE.unclosedDay)}`
+    : "Clock out now");
 
   renderWeek(STATE.week);
   renderFeed(STATE.activity);
@@ -938,24 +964,44 @@ function renderWeek(week) {
     const num = String(d.date || "").split("/").pop();
     const io = (d.in && d.in !== "—") ? `${d.in}–${d.out && d.out !== "—" ? d.out : ""}` : "—";
     const red = o && o.kind !== "wfh";   // calendar red = a day off, not a day worked elsewhere
+    const open = d.open && !red;   // a missed clock-out; leave/holiday keep their own note, WFH doesn't
     return `
-    <div class="day${d.today ? " today":""}${d.dim ? " dim":""}${red ? " off":""}" title="${esc(d.day)} ${esc(d.date)}${o ? " · " + esc(OFF_LABEL[o.kind] || "Time off") : ""}">
+    <div class="day${d.today ? " today":""}${d.dim ? " dim":""}${red ? " off":""}" title="${esc(d.day)} ${esc(d.date)}${o ? " · " + esc(OFF_LABEL[o.kind] || "Time off") : open ? " · No clock-out recorded" : ""}">
       <div class="d">${esc(d.day)}</div><div class="dt">${esc(num)}</div>
-      <div class="dur">${esc(dur)}</div>
+      ${open ? `<div class="note open">No clock&#8209;out</div>` : `<div class="dur">${esc(dur)}</div>`}
       ${o && !dur ? `<div class="note${red ? "" : " wfh"}">${esc(o.note || OFF_LABEL[o.kind] || "Time off")}</div>` : `<div class="io">${esc(io)}</div>`}
     </div>`;
   }).join(""));
 }
+/* "Fri, Nov 6" (", 2025" only outside the current year) */
+const FMT_DAY = new Intl.DateTimeFormat("en-US", {weekday:"short",month:"short",day:"numeric"});
+const FMT_DAY_Y = new Intl.DateTimeFormat("en-US", {weekday:"short",month:"short",day:"numeric",year:"numeric"});
+function fmtDay(d, now){ return (d.getFullYear() === now.getFullYear() ? FMT_DAY : FMT_DAY_Y).format(d); }
+let _feedMemo = {};
 function renderFeed(items) {
-  const today = isoDay(new Date());
-  const stamp = a => (a.date && a.date !== today)
-    ? new Date(a.date + "T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})
-    : a.time;   // older entries show their day; today's show the time
-  setHTML("#feed", items.slice(0,12).map(a => `
-    <div class="item k-${esc(a.kind)}"><span class="t">${esc(stamp(a))}</span><i></i><span class="m">${esc(a.msg)}</span></div>`).join(""));
+  // Labels depend on today's date ("Today"/"Yesterday" roll at midnight), so the
+  // HTML is rebuilt only when the list or the date changes; setHTML then skips
+  // the write while it's unchanged.
+  const now = new Date(), today = isoDay(now);
+  if (_feedMemo.items === items && _feedMemo.len === items.length && _feedMemo.today === today)
+    return setHTML("#feed", _feedMemo.html);
+  const day = iso => { const d = new Date(iso + "T00:00:00");
+    if (isNaN(d)) return null;
+    const ago = Math.round((new Date(today + "T00:00:00") - d) / 864e5);
+    return ago === 0 ? "Today" : ago === 1 ? "Yesterday" : fmtDay(d, now); };
+  const stamp = a => [day(a.date || today), a.time].filter(Boolean).join(" · ");   // no date = a live line: today
+  // ISO dates inside messages read like the stamps (history text itself is unchanged)
+  const msg = m => String(m ?? "").replace(/\b\d{4}-\d{2}-\d{2}\b/g, iso => {
+    const d = new Date(iso + "T00:00:00"); return isNaN(d) ? iso : fmtDay(d, now); });
+  const html = items.slice(0,12).map(a => `
+    <div class="item k-${esc(a.kind)}"><span class="t">${esc(stamp(a))}</span><i></i><span class="m">${esc(msg(a.msg))}</span></div>`).join("");
+  _feedMemo = { items, len: items.length, today, html };
+  setHTML("#feed", html);
 }
 function pushActivity(entry) {
   if (!STATE) return;   // a log can arrive before the first state load
+  // live log lines carry only a time: pin them to today so they become "Yesterday" after midnight
+  entry = entry.date ? entry : { ...entry, date: isoDay(new Date()) };
   STATE.activity = [entry, ...(STATE.activity||[])].slice(0,12);
   renderFeed(STATE.activity);
 }
@@ -1154,6 +1200,7 @@ function todayAt(h,m){ const d=new Date(); d.setHours(h,m,0,0); return d; }
 function schedAt(hhmm, off){ const [h,m]=(hhmm||"09:00").split(":").map(Number); const d=new Date(); d.setHours(h||0,m||0,0,0); if(off) d.setDate(d.getDate()+off); return d.getTime(); }
 function fmtSched(hhmm){ const [h,m]=(hhmm||"09:00").split(":").map(Number); const d=new Date(); d.setHours(h||0,m||0,0,0); return fmtHM(d); }
 function pad(n){ return String(n).padStart(2,"0"); }
+function isoAgo(n){ const d=new Date(); d.setDate(d.getDate()-n); return isoDay(d); }
 function isoDay(d){ return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; }   // local, not UTC
 function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
 function fmtHM(d){ let h=d.getHours(); const m=d.getMinutes(); const ap=h>=12?"PM":"AM"; h%=12; if(!h)h=12; return `${h}:${pad(m)} ${ap}`; }
@@ -1161,17 +1208,22 @@ function hm(){ return fmtHM(new Date(vnow())).replace(/ ..$/,""); }
 function fmtDur(ms){ ms=Math.max(0,ms); const s=Math.floor(ms/1000); return `${pad(Math.floor(s/3600))}:${pad(Math.floor(s%3600/60))}:${pad(s%60)}`; }
 function fmtCountdown(ms){ ms=Math.max(0,ms); const t=Math.floor(ms/60000), h=Math.floor(t/60), m=t%60; return h>0?`${h}h ${pad(m)}m`:`${m}m`; }
 function nextWorkday(hhmm){ const d=new Date(schedAt(hhmm,1)); while(d.getDay()===0||d.getDay()===6) d.setDate(d.getDate()+1); return d; }
+/* "YYYY-MM-DD" → "Friday" within the last week, else "Oct 30" */
+function dayName(iso){ const d=new Date(iso+"T00:00:00");
+  return d.toLocaleDateString("en-US", vnow()-d < 6*864e5 ? {weekday:"long"} : {month:"short",day:"numeric"}); }
 function dayLabel(d){ const t=new Date(); t.setDate(t.getDate()+1);
   return d.toDateString()===t.toDateString() ? "Tomorrow" : d.toLocaleDateString("en-US",{weekday:"long"}); }
 
-function buildMockWeek(){
+/* openIdx (0=Mon…4=Fri): a past day whose clock-out was missed */
+function buildMockWeek(openIdx){
   const now=new Date(), dow=(now.getDay()+6)%7, mon=new Date(now); mon.setDate(now.getDate()-dow); mon.setHours(0,0,0,0);
   const names=["Mon","Tue","Wed","Thu","Fri"], sample=[["9:01","18:03"],["8:58","18:00"],["9:04","18:12"],["9:02","18:05"],["9:00","18:01"]];
   const todayIdx=Math.min(dow,4);
   return names.map((day,i)=>{ const d=new Date(mon); d.setDate(mon.getDate()+i);
     const today=i===todayIdx&&dow<=4; let inT,outT,dim=false;
-    if(i<todayIdx||dow>4){ [inT,outT]=sample[i]; } else if(today){ inT="9:02"; outT="—"; } else { inT="—"; outT="—"; dim=true; }
-    return { day, date:`${d.getMonth()+1}/${d.getDate()}`, iso:isoDay(d), in:inT, out:outT, today, dim }; });
+    const past=i<todayIdx||dow>4;
+    if(past){ [inT,outT]=sample[i]; if(i===openIdx) outT="—"; } else if(today){ inT="9:02"; outT="—"; } else { inT="—"; outT="—"; dim=true; }
+    return { day, date:`${d.getMonth()+1}/${d.getDate()}`, iso:isoDay(d), in:inT, out:outT, today, dim, open:past&&outT==="—" }; });
 }
 function buildMockTimeoff(){
   const d=(off)=>{ const x=new Date(); x.setDate(x.getDate()+off); return isoDay(x); };
@@ -1179,8 +1231,9 @@ function buildMockTimeoff(){
            {date:d(12), kind:"holiday", note:"Independence Day"},
            {date:d(-2), kind:"wfh", note:""} ];
 }
-function mockState(){ const s=JSON.parse(JSON.stringify(MOCK)); s.clockInAt=todayAt(9,2).getTime();
-  s.week=buildMockWeek(); s.timeoff=buildMockTimeoff(); return s; }
+/* demo scenarios: set MOCK fields (clockInAt:null, unclosedDay, openDay, week…) and call load() */
+function mockState(){ const s=JSON.parse(JSON.stringify(MOCK));
+  if(!s.week.length) s.week=buildMockWeek(s.openDay); if(!s.timeoff.length) s.timeoff=buildMockTimeoff(); return s; }
 function mockPunch(){ return { ok:true }; }
 function mockRefresh(){ return { ok:true, message:"Session refreshed — device pass valid 14 days" }; }
 

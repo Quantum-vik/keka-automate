@@ -194,7 +194,7 @@ Paper, black ink, and one printer's ultramarine, with calendar red and amber hel
 - **Holiday Red** (red, red-soft): off-days in the week row, holiday time-off rows, expired sign-in, the failure banner, error toast, field errors. Filled red surfaces in dark mode use the deeper red-fill-dark so white text stays legible.
 
 ### Tertiary
-- **Pending Amber** (amber for text, amber-mark for marks and fills, amber-soft for strips): overdue punch, reconnecting sign-in, device pass running low, rate-limited banner, late-day count.
+- **Pending Amber** (amber for text, amber-mark for marks and fills, amber-soft for strips): overdue punch, a clock-in carried over from a missed clock-out, a past day with no clock-out, reconnecting sign-in, device pass running low, rate-limited banner, late-day count.
 
 ### Neutral
 - **Coated Paper** (paper): page, sheet, inputs, outline buttons.
@@ -253,7 +253,7 @@ The page is flat. Only things that float above the page carry the single shadow 
 
 Gentle, uniform corners: 8px on buttons, banners, toast, setup log and window controls; 6px on fields and small row buttons; 12px on the settings sheet. The state mark is a cap-height bar with a 2px corner, today's date is ringed by a 23px round, the automation switch is an 8px track. Strokes are 1px hairlines; icons are inline SVG line drawings (1.3 to 1.8 stroke, round caps).
 
-**The Solid-Dashed Rule.** Done is solid, pending is dashed. The day rail is a solid bar up to now over a dashed track to clock-out; the reconnecting state mark is a dashed amber outline; a clocked-out mark is an empty outline.
+**The Solid-Dashed Rule.** Done is solid, pending is dashed. The day rail is a solid bar up to now over a dashed track to clock-out; the reconnecting state mark is a dashed amber outline; a clocked-out mark is a solid muted ink-3 bar. The rail fills only from a real clock-in: with no punch today it stays an empty dashed track under the scheduled window.
 
 ## Components
 
@@ -265,7 +265,7 @@ Gentle, uniform corners: 8px on buttons, banners, toast, setup log and window co
 - Full-width strips under the band, 8px corners, 600 weight, 20px line icon, optional primary action at 32px. Info and update: blue-soft. Rate-limited: amber-soft with amber icon. Paused: grey-soft with ink-2 icon. Off-day: blue-soft with red icon. Failure: solid red with white text, `role="alert"`, stays until a later punch succeeds. The failure banner is the loudest thing on the page by design.
 
 ### Hero state mark
-- An 8px cap-height bar before the display headline. Live: solid ultramarine, breathing in opacity (the only infinite animation on the resting dashboard). Out: empty ink-2 outline. Reconnecting: dashed amber outline, timer dims. Overdue: solid amber, sub-line in amber naming the recovery, and the Clock out button switches to the solid primary fill (the only filled dashboard action). Expired: solid red, headline red, rail at half-opacity red.
+- An 8px cap-height bar before the display headline. Live: solid ultramarine, breathing in opacity (the only infinite animation on the resting dashboard). Out: solid ink-3 (no punch today reads "No punches today" over 00:00:00 and an empty rail; scheduled times never stand in for punches). Reconnecting: dashed amber outline, timer dims. Overdue: solid amber, sub-line in amber naming the recovery, and the Clock out button switches to the solid primary fill (the only filled dashboard action). Carried (Keka still says in, nothing was clocked in today, and a weekday in the last 3 days was left without a clock-out): solid amber, sub-line in amber naming that day, timer dims at 00:00:00, Clock out stays an outline button whose tooltip says it records the clock-out now. Clocked in elsewhere (Keka says in, no clock-in recorded, nothing left open): the normal live mark, "Clock-in time not recorded here", timer --:--:--; never a time computed from a missing punch. Expired: solid red, headline red, rail at half-opacity red.
 - Beneath: the since-line, the worked timer, and the day rail (solid bar to now, dashed to clock-out, with a 12px end tick).
 
 ### Outline action buttons
@@ -276,10 +276,10 @@ Gentle, uniform corners: 8px on buttons, banners, toast, setup log and window co
 - A 12px strip masked into 14 calendar cells (3px gaps), filled ultramarine left to right for days remaining. Running low: amber fill, amber figure. Expired: red-soft cells, red figure, and a full-width "Sign in again (OTP)" primary button.
 
 ### Week calendar row
-- Five weekday columns under a hairline, separated by hairlines: weekday label, a 34px condensed date numeral, worked hours, in/out times or a note. Today: ultramarine 2.5px ring and label. Off-days (leave, holiday): red numeral and note. WFH note stays ink-2. Future or empty days dim to ink-3. Stats run beneath as condensed figures with plain labels.
+- Five weekday columns under a hairline, separated by hairlines: weekday label, a 34px condensed date numeral, worked hours, in/out times or a note. Today: ultramarine 2.5px ring and label. Off-days (leave, holiday): red numeral and note. WFH note stays ink-2. A past day clocked in but never out (no out, an in after the last out, or an out not after the in) shows an amber "No clock-out" note where its worked hours would be, above the lone in-time (leave and holiday keep their own note; WFH shows both). Future or empty days dim to ink-3. Stats run beneath as condensed figures with plain labels.
 
 ### Feed
-- Hairline-ruled rows (7px vertical padding): 52px tabular time, an 8px mark (solid ultramarine for clock-in, solid ink-2 for clock-out, outlined ink-3 otherwise), message. Empty state reads as a plain sentence in ink-3.
+- Hairline-ruled rows (7px vertical padding): a 136px tabular stamp naming the day and the 24h time ("Today · 22:52", "Yesterday · 20:04", "Fri, Nov 6 · 20:04", the year only outside the current one; on phone it sits on its own line above the message), an 8px mark (solid ultramarine for clock-in, solid ink-2 for clock-out, outlined ink-3 otherwise), message (ISO dates inside it read in the same day style). Empty state reads as a plain sentence in ink-3.
 
 ### Settings sheet
 - A 480px paper sheet with 12px corners and the shadow token, dropped from under the band over a flat scrim. Sticky header with a 24px condensed title and a close glyph. Sections are hairline-separated (18px padding, 15px bold titles). Escape closes.
@@ -305,7 +305,7 @@ Gentle, uniform corners: 8px on buttons, banners, toast, setup log and window co
 
 ### Do:
 - **Do** keep ultramarine to the band, live state, today, focus, and the primary save.
-- **Do** carry state by form as well as hue: solid for done, dashed for pending, empty outline for out.
+- **Do** carry state by form as well as hue: solid for done, dashed for pending, a muted solid bar for out.
 - **Do** set every at-a-glance figure in the condensed numeral stack with tabular figures.
 - **Do** divide sections with hairline rules and spacing; reserve fills for banners and the OTP strip.
 - **Do** use inline SVG line icons and OS-neutral window controls.

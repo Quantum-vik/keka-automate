@@ -63,6 +63,8 @@ def test_build_week_shape():
     week = keka_ui.Backend._build_week(None, [])
     assert [d["day"] for d in week] == ["Mon", "Tue", "Wed", "Thu", "Fri"]
     assert all(d["in"] == "—" and d["out"] == "—" for d in week)
+    assert [d["iso"][-2:].lstrip("0") for d in week] == [d["date"].split("/")[1] for d in week]
+    assert all(len(d["iso"]) == 10 and d["iso"][4] == "-" for d in week)   # YYYY-MM-DD
     assert sum(1 for d in week if d["today"]) <= 1   # weekend → no 'today'
 
 

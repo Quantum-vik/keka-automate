@@ -568,7 +568,7 @@ class Backend:
             day = datetime.fromordinal(monday_ord + i)
             dstr = day.strftime("%Y-%m-%d")
             slot = by_date.get(dstr, {})
-            week.append({"day": name, "date": f"{day.month}/{day.day}",
+            week.append({"day": name, "date": f"{day.month}/{day.day}", "iso": dstr,
                          "in": slot.get("in") or "—", "out": slot.get("out") or "—",
                          "today": day.date() == now.date(), "dim": day.date() > now.date()})
         return week
@@ -840,13 +840,16 @@ def run_native():
     _platform_app_identity()
     backend = Backend()
     remote_broadcast = start_remote_server(backend)   # phone remote on the LAN
-    bg = "#eef4f2"
+    # The page's paper colour, so the window doesn't flash a different colour
+    # before the page loads. Only macOS reports dark mode reliably here: GTK3
+    # WebKit doesn't always follow GNOME's color-scheme key, so Linux stays light.
+    bg = "#ffffff"
     if sys.platform == "darwin":
-        try:      # match the pre-load window color to the system theme
+        try:
             r = subprocess.run(["defaults", "read", "-g", "AppleInterfaceStyle"],
                                capture_output=True, text=True)
             if "Dark" in (r.stdout or ""):
-                bg = "#101b18"
+                bg = "#16181d"
         except Exception:
             pass
     window = webview.create_window(

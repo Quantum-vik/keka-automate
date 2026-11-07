@@ -95,7 +95,11 @@ struct SettingsView: View {
     }
 
     private func applySchedule() {
-        model.applySchedule(["in": scheduleIn, "out": scheduleOut])
-        savedNote = "Schedule applied — launchd agents reinstalled."
+        savedNote = nil
+        Task { @MainActor in
+            if await model.applySchedule(["inTime": scheduleIn, "outTime": scheduleOut]) {
+                savedNote = "Schedule applied — launchd agents reinstalled."
+            }
+        }
     }
 }

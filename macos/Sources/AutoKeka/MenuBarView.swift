@@ -80,15 +80,21 @@ struct MenuBarView: View {
     private var schedule: some View {
         VStack(alignment: .leading, spacing: 4) {
             row("Scheduled", "\(model.state.scheduleIn) → \(model.state.scheduleOut)")
-            row("Session", model.state.sessionAlive
-                ? "valid · \(model.state.sessionDaysLeft)d device pass"
-                : "expired")
+            row("Session", sessionText)
             if !model.lastLog.isEmpty {
                 Text(model.lastLog)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
+        }
+    }
+
+    private var sessionText: String {
+        switch model.state.sessionAlive {
+        case .some(true):  return "valid · \(model.state.sessionDaysLeft)d device pass"
+        case .some(false): return "expired"
+        case .none:        return "checking…"        // no verdict from the core yet
         }
     }
 

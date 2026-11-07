@@ -5,7 +5,7 @@ import Foundation
 ///
 ///   GET  /api/state    -> full snapshot
 ///   GET  /events       -> text/event-stream (state / otp / otpDone / log)
-///   POST /api/<action> -> clock_in, clock_out, refresh_session, submit_otp, …
+///   POST /api/<action> -> clock_in, clock_out, refresh, submit_otp, …
 ///
 /// Auth is a `?t=<token>` query parameter; the core answers 401 without it.
 actor KekaClient {

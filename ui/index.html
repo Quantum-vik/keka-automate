@@ -110,12 +110,20 @@
   .banner.fail { background:var(--red); color:#fff; }
   .banner.fail .bi { color:#fff; }
   @media (prefers-color-scheme: dark) { .banner.fail { background:#b3232d; } }
+  /* negative margins keep the strip its one-line height */
+  .banner .bx { width:30px; height:30px; margin:-5px -4px -5px 0; flex-shrink:0; display:flex; align-items:center; justify-content:center;
+    border:0; border-radius:6px; background:none; color:inherit; cursor:pointer; }
+  .banner .bx svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; }
+  .banner.fail .bx:hover { background:rgba(255,255,255,.18); }
+  .banner.fail .bx:focus-visible { outline-color:#fff; }
+  .remote .banner .bx { width:44px; height:44px; margin:-12px -8px -12px 0; }
 
   /* ── hero: the state of today ─────────────────────────────────────────── */
   .hero-date { display:block; font-size:13px; font-weight:600; color:var(--ink-2); margin-bottom:4px; }
   .hero-status { display:flex; align-items:center; gap:12px; font-family:var(--f-num); font-stretch:condensed;
     font-size:40px; line-height:1.05; font-weight:700; letter-spacing:-.01em; }
   /* state mark: a cap-height bar. blue = live, muted = out, dashed = pending, amber = trouble, red = needs you */
+  .hero-status:focus { outline:none; }   /* programmatic focus target only (after a banner dismiss) */
   .hero-status .dot { position:relative; width:8px; height:.72em; border-radius:2px; flex-shrink:0; background:var(--ink-3); }
   .hero .sub { margin-top:6px; color:var(--ink-2); }
   .worked { display:flex; align-items:baseline; gap:8px; margin-top:10px; color:var(--ink-2); }
@@ -433,12 +441,13 @@
       <div id="failBanner" class="banner fail" style="display:none" role="alert">
         <svg class="bi" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.8l7.8 13.7H2.2z"/><path d="M10 8v3.6M10 14.2v.1"/></svg>
         <span class="banner-txt" id="failText">—</span>
+        <button class="bx" id="failDismiss" type="button" aria-label="Dismiss punch failure alert" title="Dismiss"><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M3 3l8 8M11 3l-8 8"/></svg></button>
       </div>
 
       <!-- HERO: the state of today -->
       <section class="hero" id="hero" data-state="out">
         <span class="hero-date" id="dateText">—</span>
-        <h1 class="hero-status"><span class="dot" id="statusDot"></span><span class="txt" id="statusText">—</span></h1>
+        <h1 class="hero-status" tabindex="-1"><span class="dot" id="statusDot"></span><span class="txt" id="statusText">—</span></h1>
         <p class="sub" id="punchLine">—</p>
         <p class="worked"><span class="timer num" id="timer">00:00:00</span><span>worked today</span></p>
         <div class="rail"><i id="workBar" style="width:0%"></i></div>
@@ -754,6 +763,7 @@ const api = {
   async clockOut()      { return hasBridge() ? window.pywebview.api.clock_out()    : mockPunch("out"); },
   async refresh()       { return hasBridge() ? window.pywebview.api.refresh_session() : mockRefresh(); },
   async submitOtp(code) { return hasBridge() ? window.pywebview.api.submit_otp(code)  : { ok:true }; },
+  async dismissFailure(ts){ return hasBridge() ? window.pywebview.api.dismiss_failure({ts}) : { ok:true }; },
   async setPause(p)     { return hasBridge() ? window.pywebview.api.set_pause({paused:p}) : mockPause(p); },
   async addTimeoff(o)   { return hasBridge() ? window.pywebview.api.add_timeoff(o)   : mockAddTimeoff(o); },
   async removeTimeoff(d){ return hasBridge() ? window.pywebview.api.remove_timeoff({date:d}) : mockRemoveTimeoff(d); },
@@ -1485,6 +1495,7 @@ document.querySelectorAll(".btn, .iconbtn").forEach(el => {
   el.setAttribute("role", "button");
   el.tabIndex = 0;
   el.addEventListener("keydown", e => {
+    if (e.repeat) return;                          // a held key must never re-punch
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); el.click(); }
   });
 });
@@ -1535,6 +1546,15 @@ async function togglePause(){
 $("#autoPill").addEventListener("click", togglePause);
 $("#autoPill").addEventListener("keydown", e => { if(e.key==="Enter"||e.key===" "){ e.preventDefault(); togglePause(); } });
 $("#pauseBtn").addEventListener("click", togglePause);
+
+/* ── dismiss the punch-failure banner (held server-side until a newer failure) */
+$("#failDismiss").addEventListener("click", async () => {
+  const f = STATE.lastFailure; if (!f) return;
+  STATE.lastFailure = null; render();
+  $(".hero-status").focus();                       // the ✕ just vanished; never onto a punch tile
+  const r = await api.dismissFailure(f.ts).catch(() => null);
+  if (!r || r.ok === false) { toast((r && r.message) || "Couldn't dismiss the alert", true); load(); }
+});
 
 /* ── time off ───────────────────────────────────────────────────────────────*/
 $("#toAdd").addEventListener("click", locked($("#toAdd"), async () => {

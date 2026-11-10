@@ -41,17 +41,22 @@ import pytesseract
 # make is thrown away with the temp dir — the "Setting up — downloading browser"
 # panel then reappears on every start, forever.
 #
-# Pin it to the per-user cache instead, the same place the source install uses,
-# so a download happens once and is found again next launch. An explicit
-# PLAYWRIGHT_BROWSERS_PATH from the environment still wins.
+# Pin it to a per-user folder that ONLY Auto-Keka uses, so a download happens
+# once and is found again next launch. Not Playwright's shared cache
+# (~/.cache/ms-playwright etc.): any other tool's `playwright install` garbage-
+# collects builds there that no live Playwright install still claims, and ours
+# (in a vanished onefile temp dir) never does — so our Chromium got deleted and
+# the next punch died with "Executable doesn't exist". Windows uses LOCALAPPDATA
+# so ~150 MB doesn't roam. An explicit PLAYWRIGHT_BROWSERS_PATH still wins.
 def _default_browsers_dir():
     home = os.path.expanduser("~")
     if sys.platform == "darwin":
-        return os.path.join(home, "Library", "Caches", "ms-playwright")
-    if sys.platform.startswith("win"):
+        base = os.path.join(home, "Library", "Application Support")
+    elif sys.platform.startswith("win"):
         base = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
-        return os.path.join(base, "ms-playwright")
-    return os.path.join(home, ".cache", "ms-playwright")
+    else:
+        base = os.environ.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share")
+    return os.path.join(base, "Auto-Keka", "ms-playwright")
 
 
 os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", _default_browsers_dir())
@@ -310,21 +315,26 @@ def _playwright_browsers_dir():
     return _default_browsers_dir()
 
 
-_chromium_ok = None   # cache: once the right build is seen it can't un-install mid-run
+_chromium_path = None   # from the first good probe; re-checked with a cheap exists()
 
 
 def chromium_installed():
     """True if the EXACT Chromium build this Playwright version needs exists.
     Merely finding a chromium-* folder is not enough — after a playwright
     upgrade a stale build lingers there while launches fail with
-    'Executable doesn't exist'. Ask Playwright for the real executable path."""
-    global _chromium_ok
-    if _chromium_ok:
-        return True
+    'Executable doesn't exist'. Ask Playwright for the real executable path,
+    once; later calls just check that path still exists (it can be deleted
+    mid-run, e.g. by another tool's Playwright cache cleanup)."""
+    global _chromium_path
+    cached = _chromium_path      # read once: install_chromium may reset it from another thread
+    if cached:
+        return os.path.exists(cached)
     log_step("chromium_installed: probing Playwright driver…", level=logging.DEBUG)
     try:
         with sync_playwright() as p:
-            _chromium_ok = os.path.exists(p.chromium.executable_path)
+            exe = p.chromium.executable_path
+            if os.path.exists(exe):
+                _chromium_path = exe
             # executable_path is local, so without a protocol round-trip we'd
             # close while Playwright's own init call is still in flight; its
             # cancellation prints "Task was destroyed but it is pending!" and
@@ -335,10 +345,11 @@ def chromium_installed():
                 pass
     except Exception:
         d = _playwright_browsers_dir()   # driver unavailable — fall back to a dir probe
-        _chromium_ok = os.path.isdir(d) and any(
-            n.startswith(("chromium-", "chromium_headless_shell-")) for n in os.listdir(d))
-    log_step("chromium_installed: %s", _chromium_ok, level=logging.DEBUG)
-    return _chromium_ok
+        if os.path.isdir(d):
+            _chromium_path = next((os.path.join(d, n) for n in os.listdir(d)
+                                   if n.startswith(("chromium-", "chromium_headless_shell-"))), None)
+    log_step("chromium_installed: %s", _chromium_path, level=logging.DEBUG)
+    return bool(_chromium_path)
 
 
 def deps_ready():
@@ -347,25 +358,45 @@ def deps_ready():
     ready = tess and chromium_installed()
     if not ready:
         log_step("deps_ready: not ready (tesseract=%s, chromium=%s)",
-                 tess, _chromium_ok, level=logging.DEBUG)
+                 tess, ready if tess else "unchecked", level=logging.DEBUG)
     return ready
 
 
-def install_chromium_frozen():
-    """Download Playwright's Chromium from a compiled binary. There is no venv
-    to run 'python -m playwright install', so drive the bundled node driver CLI
-    directly. Blocking (can take minutes) → bool."""
+def install_chromium():
+    """Download Playwright's Chromium into PLAYWRIGHT_BROWSERS_PATH by driving
+    the bundled node driver CLI directly — works in the compiled build (no venv
+    for 'python -m playwright install') and from source alike. Blocking (can
+    take minutes) → bool."""
+    global _chromium_path
     try:
         from playwright._impl._driver import compute_driver_executable, get_driver_env
         driver = compute_driver_executable()
         cmd = list(driver) if isinstance(driver, (tuple, list)) else [str(driver)]
         r = subprocess.run(cmd + ["install", "chromium"], env=get_driver_env(),
                            capture_output=True, text=True, timeout=1800)
-        global _chromium_ok
-        _chromium_ok = None          # force a re-probe after the download
         return r.returncode == 0
     except Exception:
         return False
+    finally:
+        _chromium_path = None        # force a re-probe after the download
+
+
+_MISSING_EXE = "Executable doesn't exist"
+
+
+def launch_chromium(p, **kw):
+    """p.chromium.launch(**kw), reinstalling Chromium and retrying ONCE if its
+    build is gone (see _default_browsers_dir for how it can vanish)."""
+    try:
+        return p.chromium.launch(**kw)
+    except PlaywrightError as e:
+        if _MISSING_EXE not in str(e):
+            raise
+        log_step("launch_chromium: %s — reinstalling Chromium",
+                 str(e).splitlines()[0], level=logging.WARNING)
+    if not install_chromium():
+        raise PlaywrightError(f"Chromium is missing ({_MISSING_EXE}) and reinstalling it failed")
+    return p.chromium.launch(**kw)
 
 
 # ── First-run onboarding flag ─────────────────────────────────────────────────
@@ -1142,7 +1173,7 @@ def interactive_login(otp_getter, log, headless=True):
     """
     log_step("interactive_login: begin (headless=%s)", headless)
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=headless)
+        browser = launch_chromium(p, headless=headless)
         # Locked from BEFORE the state load: relogin decisions made on a stale
         # snapshot must not overwrite cookies another process just refreshed.
         _lk = _acquire_session_lock(timeout=60, log=log)
@@ -1659,7 +1690,7 @@ def get_status():
     if not os.path.exists(SESSION_FILE):
         return None
     with sync_playwright() as p:
-        b = p.chromium.launch(headless=True)
+        b = launch_chromium(p, headless=True)
         ctx = b.new_context(storage_state=SESSION_FILE)
         page = ctx.new_page()
         # If Keka starts 429-ing us, STOP probing — hammering a rate-limited
@@ -2064,10 +2095,13 @@ def _punch_once(action, log, scheduled):
                      "no saved session — open Auto-Keka and sign in")
         sys.exit(2)
 
-    _lk = _acquire_session_lock(timeout=120, log=log)
+    _lk = None
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            # Launch BEFORE locking: a Chromium reinstall can take minutes and
+            # must not hold session.lock while other runs wait on it.
+            browser = launch_chromium(p, headless=True)
+            _lk = _acquire_session_lock(timeout=120, log=log)
             ctx     = browser.new_context(storage_state=SESSION_FILE)
             page    = ctx.new_page()
 
@@ -2172,9 +2206,11 @@ def _punch_once(action, log, scheduled):
         punch_failed(action, log, "captcha reader (tesseract) is not installed — install it "
                                   "(Linux: tesseract-ocr tesseract-ocr-eng), then retry")
         sys.exit(2)
-    except Exception:
+    except Exception as e:
         log.exception("Unhandled error during Punch-%s", label)
-        punch_failed(action, log, "unexpected error — see the punch log")
+        punch_failed(action, log, "browser (Chromium) is missing and reinstalling it failed — "
+                                  "open Auto-Keka to finish setup" if _MISSING_EXE in str(e)
+                     else "unexpected error — see the punch log")
         raise
     finally:
         _release_session_lock(_lk)

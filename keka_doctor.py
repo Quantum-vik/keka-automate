@@ -58,7 +58,7 @@ def main():
         _report(OK, "Playwright Chromium", "exact build present")
     else:
         _report(BAD, "Playwright Chromium",
-                "missing/stale — run: python -m playwright install chromium")
+                "missing/stale — open Auto-Keka (it reinstalls it) or run setup (--phase heavy)")
         failures += 1
     if sys.platform.startswith("linux"):     # non-fatal: the browser fallback works
         gtk = _native_window_backend()

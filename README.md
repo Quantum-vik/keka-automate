@@ -217,7 +217,7 @@ open a browser once for your OTP. Handy flags: `--no-login` / `--no-schedule`
 # 1) Python environment + libraries
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt          # Windows: .venv\Scripts\pip
-.venv/bin/python -m playwright install chromium
+.venv/bin/python -c "import keka_common as k; k.install_chromium()"   # Chromium, into Auto-Keka's own folder
 
 # 2) Install tesseract + desktop bits
 #    macOS:    brew install tesseract

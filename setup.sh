@@ -178,6 +178,9 @@ fi  # want light
 if want heavy; then
 # ── 4. Playwright Chromium (+ system libs on Linux) ───────────────────────────
 b "Installing Playwright's Chromium browser"
+# Into Auto-Keka's private folder (not Playwright's shared cache), where the app looks.
+PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$("$VENV_PY" -c 'import keka_common as k; print(k._default_browsers_dir())')}"
+export PLAYWRIGHT_BROWSERS_PATH
 if [ "$OS" = "Linux" ]; then
     if command -v pacman >/dev/null 2>&1; then
         # Arch isn't supported by `playwright install-deps` — install libs via pacman.

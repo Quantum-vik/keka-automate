@@ -319,7 +319,7 @@ class Backend:
             if kc.FROZEN:
                 # No source tree/venv in the compiled build — use the bundled
                 # Playwright driver for Chromium; tesseract needs the OS package.
-                ok = kc.install_chromium_frozen()
+                ok = kc.install_chromium()
                 rc = 0 if ok else 1
                 if not kc._find_tesseract():
                     self.push_log("Install the tesseract OCR engine: "

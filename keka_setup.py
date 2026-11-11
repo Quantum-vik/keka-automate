@@ -40,7 +40,7 @@ def main():
         launch_args = []
         if os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("DISPLAY"):
             launch_args = ["--ozone-platform=wayland"]
-        browser = p.chromium.launch(headless=False, slow_mo=150, args=launch_args)
+        browser = kc.launch_chromium(p, headless=False, slow_mo=150, args=launch_args)
         ctx     = browser.new_context()
         page    = ctx.new_page()
 

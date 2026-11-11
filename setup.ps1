@@ -124,6 +124,13 @@ Ok "playwright, pywebview, pytesseract, pillow installed"
 if (Want 'heavy') {
 # ── 4. Playwright Chromium ─────────────────────────────────────────────────────
 Step "4. Installing Playwright's Chromium browser"
+# Into Auto-Keka's private folder (not Playwright's shared cache), where the app looks.
+if (-not $env:PLAYWRIGHT_BROWSERS_PATH) {
+    $env:PLAYWRIGHT_BROWSERS_PATH = (& $VenvPy -c "import keka_common as k; print(k._default_browsers_dir())")
+    if ($LASTEXITCODE -ne 0 -or -not $env:PLAYWRIGHT_BROWSERS_PATH) {
+        Die "Couldn't work out Auto-Keka's browser folder (importing keka_common failed). Re-run setup with -Phase light first."
+    }
+}
 & $VenvPy -m playwright install chromium
 Ok "Chromium ready"
 
